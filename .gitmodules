@@ -1,0 +1,18 @@
+[submodule "nuc25.local/ragflow"]
+	path = nuc25.local/ragflow
+	url = https://github.com/infiniflow/ragflow.git
+[submodule "macstudio.local/vllm-metal"]
+	path = macstudio.local/vllm-metal
+	url = https://github.com/vllm-project/vllm-metal.git
+[submodule "macstudio.local/infinity"]
+	path = macstudio.local/infinity
+	url = https://github.com/michaelfeil/infinity.git
+[submodule "macstudio.local/anemll-server"]
+	path = macstudio.local/anemll-server
+	url = https://github.com/alexgusevski/anemll-server.git
+[submodule "macstudio.local/apple-on-device-openai"]
+	path = macstudio.local/apple-on-device-openai
+	url = https://github.com/gety-ai/apple-on-device-openai.git
+[submodule "macstudio.local/wyoming-whisper-cpp"]
+	path = macstudio.local/wyoming-whisper-cpp
+	url = https://github.com/rhasspy/wyoming-whisper-cpp.git

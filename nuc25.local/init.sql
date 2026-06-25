@@ -1,0 +1,5 @@
+CREATE DATABASE IF NOT EXISTS rag_flow;
+CREATE USER IF NOT EXISTS 'rag_flow'@'%' IDENTIFIED BY 'infini_rag_flow';
+GRANT ALL PRIVILEGES ON rag_flow.* TO 'rag_flow'@'%';
+FLUSH PRIVILEGES;
+

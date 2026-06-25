@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.macaistack.ext-mount</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/sbin/diskutil</string>
+        <string>mount</string>
+        <string>-mountPoint</string>
+        <string>/ext</string>
+        <string>88D0FD56-02EC-4388-9D05-3C93E83794EF</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/var/log/macaistack-ext-mount.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/macaistack-ext-mount.log</string>
+</dict>
+</plist>

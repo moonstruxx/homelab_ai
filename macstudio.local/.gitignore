@@ -1,0 +1,22 @@
+# Claude session state
+.claude/projects/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.venv-*/
+venv/
+
+# Service caches
+.infinity_cache/
+
+# Logs
+*.log
+
+# macOS
+.DS_Store
+
+# Secrets (.env holds HF_TOKEN, Langfuse keys etc.; env.sh just sources it)
+.env

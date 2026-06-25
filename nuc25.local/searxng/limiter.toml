@@ -1,0 +1,3 @@
+[botdetection]
+  ipv4_prefix = 32
+  ipv6_prefix = 48

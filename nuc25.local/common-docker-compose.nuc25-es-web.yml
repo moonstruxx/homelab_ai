@@ -1,0 +1,621 @@
+x-defaults: &defaults
+  restart: unless-stopped
+  env_file:
+    - .env
+  logging:
+    driver: json-file
+    options:
+      max-size: "50m"
+      max-file: "3"
+  networks:
+    - ragflow
+
+x-health-defaults: &health_defaults
+  interval: 10s
+  timeout: 10s
+  retries: 60
+
+services:
+  mysql:
+    <<: *defaults
+    networks: [rag-data]
+    image: mysql:8.0
+    command:
+        - --max_connections=1000
+        - --character-set-server=utf8mb4
+        - --collation-server=utf8mb4_unicode_ci
+        - --default-authentication-plugin=mysql_native_password
+        - --tls_version=TLSv1.2,TLSv1.3
+        - --init-file=/data/application/init.sql
+        - --binlog_expire_logs_seconds=604800
+    environment:
+       MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD}
+       MYSQL_ROOT_HOST: "%"
+    # No host publish: only ragflow uses MySQL, over the internal rag-data network.
+    volumes:
+       - ./srv/stack/mysql:/var/lib/mysql
+       - ./init.sql:/data/application/init.sql:ro
+    healthcheck:
+      <<: *health_defaults
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-p${MYSQL_PASSWORD}"]
+    labels:
+      wud.watch: 'true'
+      wud.display.name: MySQL
+      wud.display.icon: si:mysql
+      wud.tag.include: '^8\.0\.\d+$'
+      wud.watch.digest: 'true'
+
+  minio:
+    <<: *defaults
+    networks: [rag-data]
+    image: pgsty/minio:RELEASE.2026-03-25T00-00-00Z
+    command: ["server", "--console-address", ":9001", "/data"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
+    # No host publish: only ragflow uses MinIO, over the internal rag-data network.
+    volumes:
+      - ./srv/stack/minio:/data
+    healthcheck:
+      <<: *health_defaults
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+    labels:
+      wud.watch: 'true'
+      wud.display.name: MinIO (RAGFlow)
+      wud.display.icon: si:minio
+      wud.watch.digest: 'true'
+
+  redis:
+    <<: *defaults
+    networks: [rag-data]
+    image: valkey/valkey:8
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    # No host publish: only ragflow uses Redis, over the internal rag-data network.
+    volumes:
+      - ./srv/stack/redis:/data
+    healthcheck:
+      <<: *health_defaults
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+    labels:
+      wud.watch: 'true'
+      wud.display.name: Valkey (RAGFlow cache)
+      wud.display.icon: si:redis
+      wud.watch.digest: 'true'
+
+  elasticsearch:
+    <<: *defaults
+    networks: [rag-data]
+    image: elasticsearch:${STACK_VERSION:-8.17.0}
+    environment:
+      node.name: es01
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD}
+      bootstrap.memory_lock: "true"
+      discovery.type: single-node
+      xpack.security.enabled: "true"
+      xpack.security.http.ssl.enabled: "false"
+      xpack.security.transport.ssl.enabled: "false"
+      cluster.routing.allocation.disk.watermark.low: 10gb
+      cluster.routing.allocation.disk.watermark.high: 8gb
+      cluster.routing.allocation.disk.watermark.flood_stage: 5gb
+      # Redirect jansi native lib extraction away from the tmpfs /tmp
+      ES_JAVA_OPTS: "-Xms2g -Xmx2g -Djansi.tmpdir=/usr/share/elasticsearch/data"
+    # No host publish: only ragflow/gatus use ES, over the internal rag-data network.
+    volumes:
+      - ./srv/stack/elasticsearch:/usr/share/elasticsearch/data
+    tmpfs:
+      - /tmp:exec,mode=1777,size=512m
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    healthcheck:
+      <<: *health_defaults
+      test: ["CMD-SHELL", "curl http://localhost:9200"]
+    labels:
+      wud.watch: 'true'
+      wud.display.name: Elasticsearch
+      wud.display.icon: si:elastic
+      wud.watch.digest: 'true'
+
+  ragflow:
+    <<: *defaults
+    networks: [ragflow, rag-data]
+    image: ${RAGFLOW_IMAGE}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    command:
+      - --enable-adminserver
+      - --init-model-provider-tables
+      - --enable-mcpserver
+      - --mcp-host=0.0.0.0
+      - --mcp-host-api-key=${RAGFLOW_MCP_API_KEY}
+    ports:
+      - ${SVR_WEB_HTTP_PORT:-8080}:80
+      - ${SVR_WEB_HTTPS_PORT:-8443}:443
+      - ${SVR_HTTP_PORT:-9380}:9380
+      - 127.0.0.1:${ADMIN_SVR_HTTP_PORT:-9381}:9381
+      - ${SVR_MCP_PORT:-9382}:9382
+      - 127.0.0.1:${GO_HTTP_PORT:-9384}:9384
+      - 127.0.0.1:${GO_ADMIN_PORT:-9383}:9383
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./ragflow-logs:/ragflow/logs
+      - ./conf:/ragflow/conf
+      - ./entrypoint.sh:/ragflow/entrypoint.sh:ro
+      # Patch: fix Langfuse "view" button hardcoded to cloud.langfuse.com — uses configured host instead.
+      # Must be re-applied when RAGFLOW_IMAGE changes (chunk filename is content-addressed).
+      - ./patches/web/index-CJBrrOXS.js:/ragflow/web/dist/chunk/js/index-CJBrrOXS.js:ro
+    labels:
+      wud.watch: 'true'
+      wud.display.name: RAGFlow
+      wud.display.icon: mdi:robot
+      wud.watch.digest: 'true'
+
+  paddleocr:
+    <<: *defaults
+    build: ./paddleocr
+    environment:
+      OPENAI_API_BASE: ${PADDLEOCR_VLLM_ENDPOINT:-http://macstudio.local:8000/v1}
+      OPENAI_API_KEY: ${PADDLEOCR_VLLM_API_KEY:-dummy}
+      OPENAI_API_MODEL: ${PADDLEOCR_VLLM_MODEL:-PaddlePaddle/PaddleOCR-VL}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_HOST: http://langfuse-web:3000
+    ports:
+      - 127.0.0.1:${PADDLEOCR_PORT:-8010}:8000
+    extra_hosts:
+      - "macstudio.local:${MACSTUDIO_IP:-192.168.1.114}"
+    healthcheck:
+      <<: *health_defaults
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+    labels:
+      wud.watch: 'false'
+      wud.display.name: PaddleOCR API
+      wud.display.icon: mdi:ocr
+
+  searxng:
+    <<: *defaults
+    profiles: ["webscrape"]
+    image: searxng/searxng:latest
+    environment:
+      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://localhost:8088/}
+      SEARXNG_INSTANCE_NAME: ${SEARXNG_INSTANCE_NAME:-SearXNG-RAG}
+    ports:
+      - 127.0.0.1:${SEARXNG_PORT:-8088}:8080
+    volumes:
+      - ./searxng:/etc/searxng
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      <<: *health_defaults
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+    labels:
+      wud.watch: 'true'
+      wud.display.name: SearXNG
+      wud.display.icon: mdi:search-web
+      wud.watch.digest: 'true'
+
+  spider-local:
+    <<: *defaults
+    profiles: ["webscrape"]
+    build: ./spider-local
+    environment:
+      RUST_LOG: info
+    ports:
+      - 127.0.0.1:${SPIDER_PORT:-11235}:8000
+    # spider-rs uses io_uring (tokio-uring), which Docker's default seccomp
+    # profile blocks (moby#47532) -> empty crawls. This profile is the default
+    # plus the three io_uring syscalls; everything else stays sandboxed.
+    security_opt:
+      - seccomp=./seccomp/io-uring.json
+    healthcheck:
+      <<: *health_defaults
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+    labels:
+      wud.watch: 'false'
+
+  rag-mcp:
+    <<: *defaults
+    profiles: ["webscrape"]
+    build: ./web-tools-mcp
+    environment:
+      SEARXNG_URL: http://searxng:8080
+      SPIDER_URL: http://spider-local:8000
+    ports:
+      - 127.0.0.1:${MCP_TOOLS_PORT:-11236}:8000
+    healthcheck:
+      <<: *health_defaults
+      # /mcp answers without a session with HTTP 4xx -> any HTTP response means "up"
+      test: ["CMD", "python", "-c", "import urllib.request,urllib.error\ntry:\n urllib.request.urlopen('http://localhost:8000/mcp')\nexcept urllib.error.HTTPError:\n pass"]
+    labels:
+      wud.watch: 'false'
+
+  langfuse-postgres:
+    <<: *defaults
+    profiles: ["langfuse"]
+    networks: [rag-data]
+    image: postgres:${POSTGRES_VERSION:-17}
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      DATABASE_URL: postgresql://langfuse:${POSTGRES_PASSWORD}@langfuse-postgres:5432/langfuse
+      TZ: UTC
+      PGTZ: UTC
+    ports:
+      - 127.0.0.1:${LANGFUSE_POSTGRES_PORT:-5433}:5432
+    volumes:
+      - ./srv/stack/langfuse/postgres:/var/lib/postgresql/data
+    healthcheck:
+     interval: 3s
+     timeout: 3s
+     retries: 20
+     test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+    labels:
+      wud.watch: 'true'
+      wud.display.name: Postgres (Langfuse)
+      wud.display.icon: si:postgresql
+      wud.watch.digest: 'true'
+
+  langfuse-clickhouse:
+    <<: *defaults
+    profiles: ["langfuse"]
+    networks: [rag-data]
+    image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:-26.5}
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-clickhouse}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+    ports:
+      - 127.0.0.1:${LANGFUSE_CLICKHOUSE_HTTP_PORT:-8124}:8123
+      - 127.0.0.1:${LANGFUSE_CLICKHOUSE_TCP_PORT:-9002}:9000
+    volumes:
+      - ./srv/stack/langfuse/clickhouse/data:/var/lib/clickhouse
+      - ./srv/stack/langfuse/clickhouse/logs:/var/log/clickhouse-server
+    healthcheck:
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 1s
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"]
+    labels:
+      wud.watch: 'true'
+      wud.display.name: ClickHouse
+      wud.display.icon: si:clickhouse
+      wud.tag.include: '^26\.5\.\d+\.\d+$'
+      wud.watch.digest: 'true'
+
+  langfuse-minio:
+    <<: *defaults
+    profiles: ["langfuse"]
+    networks: [rag-data]
+    image: cgr.dev/chainguard/minio:latest
+    entrypoint: sh
+    command: -c 'minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: ${LANGFUSE_MINIO_ROOT_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${LANGFUSE_MINIO_ROOT_PASSWORD}
+    ports:
+      - 127.0.0.1:${LANGFUSE_MINIO_PORT:-9090}:9000
+      - 127.0.0.1:${LANGFUSE_MINIO_CONSOLE_PORT:-9091}:9001
+    volumes:
+      - langfuse_minio_data:/data
+    healthcheck:
+      interval: 1s
+      timeout: 5s
+      retries: 5
+      start_period: 1s
+      test: ["CMD", "mc", "ready", "local"]
+    labels:
+      wud.watch: 'false'
+
+  langfuse-redis:
+    <<: *defaults
+    profiles: ["langfuse"]
+    networks: [rag-data]
+    image: redis:7
+    command: >
+      --requirepass ${LANGFUSE_REDIS_AUTH}
+      --maxmemory-policy noeviction
+    ports:
+      - 127.0.0.1:${LANGFUSE_REDIS_PORT_HOST:-6381}:6379
+    volumes:
+      - ./srv/stack/langfuse/redis:/data
+    healthcheck:
+      interval: 3s
+      timeout: 10s
+      retries: 10
+      test: ["CMD-SHELL", "redis-cli -a ${LANGFUSE_REDIS_AUTH} --no-auth-warning ping"]
+    labels:
+      wud.watch: 'true'
+      wud.display.name: Redis (Langfuse)
+      wud.display.icon: si:redis
+      wud.watch.digest: 'true'
+
+  langfuse-worker:
+    <<: *defaults
+    profiles: ["langfuse"]
+    networks: [ragflow, rag-data]
+    image: langfuse/langfuse-worker:3
+    depends_on:
+      langfuse-postgres:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+    ports:
+      - 127.0.0.1:${LANGFUSE_WORKER_PORT:-3030}:3030
+    environment:
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      DATABASE_URL: ${LANGFUSE_DATABASE_URL:-postgresql://postgres:${POSTGRES_PASSWORD}@langfuse-postgres:5433/postgres}
+      SALT: ${SALT}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      TELEMETRY_ENABLED: ${TELEMETRY_ENABLED:-true}
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: ${LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES:-false}
+      CLICKHOUSE_MIGRATION_URL: ${CLICKHOUSE_MIGRATION_URL:-clickhouse://langfuse-clickhouse:9000}
+      CLICKHOUSE_URL: ${CLICKHOUSE_URL:-http://langfuse-clickhouse:8123}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-clickhouse}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: ${LANGFUSE_S3_EVENT_UPLOAD_BUCKET:-langfuse}
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ROOT_USER:-minio}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_ROOT_PASSWORD}
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: ${LANGFUSE_S3_MEDIA_UPLOAD_BUCKET:-langfuse}
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ROOT_USER:-minio}
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_ROOT_PASSWORD}
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_BATCH_EXPORT_ENABLED: "true"
+      LANGFUSE_S3_BATCH_EXPORT_BUCKET: ${LANGFUSE_S3_BATCH_EXPORT_BUCKET:-langfuse}
+      LANGFUSE_S3_BATCH_EXPORT_REGION: auto
+      LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ROOT_USER:-minio}
+      LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_ROOT_PASSWORD}
+      LANGFUSE_S3_BATCH_EXPORT_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_BATCH_EXPORT_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_BATCH_EXPORT_PREFIX: exports/
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: 6379
+      REDIS_AUTH: ${LANGFUSE_REDIS_AUTH}
+    labels:
+      wud.watch: 'true'
+      wud.display.name: Langfuse Worker
+      wud.display.icon: mdi:cog-sync
+      wud.tag.include: '^3\.\d+\.\d+$'
+      wud.watch.digest: 'true'
+
+  langfuse-web:
+    <<: *defaults
+    profiles: ["langfuse"]
+    networks: [ragflow, rag-data]
+    image: langfuse/langfuse:3
+    depends_on:
+      langfuse-postgres:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+    ports:
+      - ${LANGFUSE_WEB_PORT:-3000}:3000
+    environment:
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://192.168.1.224:3000}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      DATABASE_URL: ${LANGFUSE_DATABASE_URL:-postgresql://postgres:${POSTGRES_PASSWORD}@langfuse-postgres:5433/postgres}
+      SALT: ${SALT}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      TELEMETRY_ENABLED: ${TELEMETRY_ENABLED:-true}
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: ${LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES:-false}
+      CLICKHOUSE_MIGRATION_URL: ${CLICKHOUSE_MIGRATION_URL:-clickhouse://langfuse-clickhouse:9000}
+      CLICKHOUSE_URL: ${CLICKHOUSE_URL:-http://langfuse-clickhouse:8123}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-clickhouse}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: ${LANGFUSE_S3_EVENT_UPLOAD_BUCKET:-langfuse}
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ROOT_USER:-minio}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_ROOT_PASSWORD}
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: ${LANGFUSE_S3_MEDIA_UPLOAD_BUCKET:-langfuse}
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ROOT_USER:-minio}
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_ROOT_PASSWORD}
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_BATCH_EXPORT_ENABLED: "true"
+      LANGFUSE_S3_BATCH_EXPORT_BUCKET: ${LANGFUSE_S3_BATCH_EXPORT_BUCKET:-langfuse}
+      LANGFUSE_S3_BATCH_EXPORT_REGION: auto
+      LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ROOT_USER:-minio}
+      LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_ROOT_PASSWORD}
+      LANGFUSE_S3_BATCH_EXPORT_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_BATCH_EXPORT_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_BATCH_EXPORT_PREFIX: exports/
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: 6379
+      REDIS_AUTH: ${LANGFUSE_REDIS_AUTH}
+      HOSTNAME: "0.0.0.0"
+    volumes:
+      # Stub out dd-trace: langfuse/langfuse:3 statically imports it but it is not
+      # bundled in the image. The shim satisfies the ESM import without doing anything.
+      - ./fakemodules/dd-trace:/app/node_modules/dd-trace:ro
+    labels:
+      wud.watch: 'true'
+      wud.display.name: Langfuse
+      wud.display.icon: mdi:chart-timeline-variant
+      wud.tag.include: '^3\.\d+\.\d+$'
+      wud.watch.digest: 'true'
+
+  tailscale:
+    <<: *defaults
+    profiles: ["tailscale"]
+    image: tailscale/tailscale:stable
+    environment:
+      TS_HOSTNAME: ${TS_HOSTNAME:-nuc25-rag}
+      TS_AUTH_KEY: ${TS_AUTH_KEY}
+      TS_EXTRA_ARGS: ${TS_EXTRA_ARGS:---advertise-tags=tag:ragflow-stack}
+      TS_STATE_DIR: /var/lib/tailscale
+    init: true
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - tailscale_state:/var/lib/tailscale
+      - tailscale_sock:/tmp
+    cap_add:
+      - NET_ADMIN
+    healthcheck:
+      test: ["CMD-SHELL", "tailscale status --peers=false --json | grep -q 'Online.*true'"]
+      start_period: 10s
+      interval: 5s
+      retries: 10
+    labels:
+      wud.watch: 'true'
+      wud.display.name: Tailscale
+      wud.display.icon: si:tailscale
+      wud.watch.digest: 'true'
+
+  caddy:
+    profiles: ["tailscale"]
+    build: ./caddy
+    restart: unless-stopped
+    env_file:
+      - .env
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    depends_on:
+      tailscale:
+        condition: service_healthy
+    environment:
+      TS_HOSTNAME: ${TS_HOSTNAME:-nuc25-rag}
+      TS_TAILNET: ${TS_TAILNET}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - tailscale_sock:/var/run/tailscale
+      - caddy_data:/data
+      - caddy_config:/config
+    network_mode: service:tailscale
+    labels:
+      wud.watch: 'false'  # local build, not on Docker Hub
+      wud.display.name: Caddy
+      wud.display.icon: mdi:server-network
+
+  wud:
+    <<: *defaults
+    image: getwud/wud:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - wud_data:/store
+    ports:
+      - 127.0.0.1:${WUD_PORT:-3002}:3000
+    environment:
+      WUD_LOG_LEVEL: warn
+      # Opt-in mode: only watch containers that explicitly set wud.watch=true.
+      # Prevents noise from other compose stacks on the same host.
+      WUD_WATCHER_LOCAL_WATCHBYDEFAULT: 'false'
+      # Push image-update notifications to ntfy
+      WUD_TRIGGER_NTFY_1_URL: "http://ntfy:80"
+      WUD_TRIGGER_NTFY_1_TOPIC: "rag-stack-updates"
+      WUD_TRIGGER_NTFY_1_PRIORITY: "3"
+      # Docker Hub credentials — avoids anonymous rate limiting (429) and "domain undefined" warnings
+      WUD_REGISTRY_HUB_1_LOGIN: "${DOCKERHUB_USERNAME}"
+      WUD_REGISTRY_HUB_1_PASSWORD: "${DOCKERHUB_TOKEN}"
+    labels:
+      wud.watch: 'false'
+
+  ntfy:
+    <<: *defaults
+    image: binwiederhier/ntfy:latest
+    command: serve
+    environment:
+      NTFY_BASE_URL: "https://${TS_HOSTNAME}.${TS_TAILNET}:${NTFY_PORT:-5555}"
+      NTFY_CACHE_FILE: /var/lib/ntfy/cache.db
+      NTFY_LOG_LEVEL: warn
+    volumes:
+      - ntfy_data:/var/lib/ntfy
+    ports:
+      - "127.0.0.1:${NTFY_PORT:-5555}:80"
+    healthcheck:
+      <<: *health_defaults
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80/v1/health || exit 1"]
+    labels:
+      wud.watch: 'true'
+      wud.display.name: ntfy
+      wud.display.icon: mdi:bell-ring
+      wud.watch.digest: 'true'
+
+  gatus:
+    restart: unless-stopped
+    env_file:
+      - .env
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    networks:
+      - ragflow
+      - rag-data
+      - rag-ingress
+    image: twinproduction/gatus:stable
+    volumes:
+      - ./gatus/config.yaml:/config/config.yaml:ro
+    ports:
+      - "0.0.0.0:${GATUS_PORT:-8090}:8080"
+    environment:
+      GATUS_ES_AUTH_B64: ${GATUS_ES_AUTH_B64}
+      MACSTUDIO_IP: ${MACSTUDIO_IP:-192.168.1.114}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      interval: 10s
+      timeout: 10s
+      retries: 60
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+    labels:
+      wud.watch: 'true'
+      wud.display.name: Gatus
+      wud.display.icon: mdi:heart-pulse
+      wud.watch.digest: 'true'
+
+networks:
+  ragflow:
+    driver: bridge
+  rag-data:
+    driver: bridge
+  # Thin cross-stack bridge (created out-of-band: `docker network create rag-ingress`).
+  # Only gatus joins it, solely to health-check Paperless and Nextcloud. Replaces the
+  # old `nextcloud-aio` external join so this stack no longer sits on AIO's data bridge.
+  rag-ingress:
+    external: true
+volumes:
+  langfuse_minio_data:
+    driver: local
+  tailscale_state:
+  tailscale_sock:
+  caddy_data:
+  caddy_config:
+  wud_data:
+  ntfy_data:

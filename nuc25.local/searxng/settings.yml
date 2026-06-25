@@ -1,0 +1,22 @@
+use_default_settings: true
+
+server:
+  secret_key: "change-me"
+  limiter: false
+  image_proxy: true
+  # Accept X-Forwarded-For / X-Real-IP from all upstream proxies
+  forwarded_allow_ips: "*"
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  formats:
+    - html
+    - json
+
+engines:
+  # Mark Tor-dependent engines inactive to suppress load errors (no Tor available)
+  - name: ahmia
+    inactive: true
+  - name: torch
+    inactive: true

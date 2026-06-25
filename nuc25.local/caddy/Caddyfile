@@ -1,0 +1,41 @@
+{$TS_HOSTNAME}.{$TS_TAILNET} {
+    tls {
+        get_certificate tailscale
+    }
+    reverse_proxy ragflow:80 {
+        header_up Host {host}
+        header_up X-Forwarded-Proto https
+    }
+}
+
+{$TS_HOSTNAME}.{$TS_TAILNET}:3000 {
+    tls {
+        get_certificate tailscale
+    }
+    reverse_proxy langfuse-web:3000
+}
+
+{$TS_HOSTNAME}.{$TS_TAILNET}:8010 {
+    tls {
+        get_certificate tailscale
+    }
+    reverse_proxy paddleocr:8000
+}
+
+{$TS_HOSTNAME}.{$TS_TAILNET}:8090 {
+    tls {
+        get_certificate tailscale
+    }
+    reverse_proxy gatus:8080
+}
+
+{$TS_HOSTNAME}.{$TS_TAILNET}:5555 {
+    tls {
+        get_certificate tailscale
+    }
+    reverse_proxy ntfy:80 {
+        header_up Host {host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}

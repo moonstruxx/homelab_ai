@@ -1,0 +1,11 @@
+{
+  "name": "dd-trace",
+  "version": "5.0.0",
+  "description": "No-op stub for langfuse-web (dd-trace not used in self-hosted deployment)",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./init": "./init.js",
+    "./initialize.mjs": "./initialize.mjs"
+  }
+}

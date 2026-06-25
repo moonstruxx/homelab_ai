@@ -1,0 +1,217 @@
+ui:
+  title: RAG Stack Status
+  header: RAG Stack Health
+  buttons:
+    - name: RAGFlow
+      link: http://nuc25.local:9380
+    - name: Langfuse
+      link: http://nuc25.local:3000
+    - name: MinIO
+      link: http://nuc25.local:9001
+    - name: SearXNG
+      link: http://nuc25.local:8888
+    - name: Nextcloud
+      link: https://cloud.taildec1bd.ts.net
+    - name: Paperless
+      link: https://cloud.taildec1bd.ts.net:8010
+    - name: MLX Gateway
+      link: http://${MACSTUDIO_IP}:8080
+    - name: WUD
+      link: http://nuc25.local:3002
+    - name: ntfy
+      link: http://nuc25.local:5555
+
+alerting:
+  ntfy:
+    url: "http://ntfy:80"
+    topic: "rag-stack"
+    priority: 4
+    default-alert:
+      failure-threshold: 3
+      success-threshold: 2
+      send-on-resolved: true
+
+endpoints:
+
+  # ── nuc25: RAG Core ───────────────────────────────────────────────────────
+
+  - name: RAGFlow
+    group: "nuc25 — RAG Core"
+    url: "http://ragflow:80/"
+    description: "RAGFlow web UI | docker network: ragflow:80 | external: http://localhost:9380"
+    interval: 30s
+    conditions:
+      - "[STATUS] == 200"
+    alerts:
+      - type: ntfy
+
+  - name: Elasticsearch
+    group: "nuc25 — RAG Core"
+    url: "http://elastic:OqoCT3e6tWShB2aKlqt0S0lP69yioXYY@elasticsearch:9200/_cluster/health"
+    description: "Elasticsearch cluster health | docker network: elasticsearch:9200 | requires auth"
+    interval: 30s
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY].status != red"
+    alerts:
+      - type: ntfy
+
+  - name: MySQL
+    group: "nuc25 — RAG Core"
+    url: "tcp://mysql:3306"
+    description: "MySQL database | docker network: mysql:3306 | external: localhost:3306"
+    interval: 30s
+    conditions:
+      - "[CONNECTED] == true"
+    alerts:
+      - type: ntfy
+
+  - name: MinIO (RAGFlow)
+    group: "nuc25 — RAG Core"
+    url: "http://minio:9000/minio/health/live"
+    description: "MinIO S3 storage | docker network: minio:9000 | external: localhost:9000 | console: localhost:9001"
+    interval: 30s
+    conditions:
+      - "[STATUS] == 200"
+    alerts:
+      - type: ntfy
+
+  - name: Redis (RAGFlow)
+    group: "nuc25 — RAG Core"
+    url: "tcp://redis:6379"
+    description: "Redis cache/broker | docker network: redis:6379 | external: localhost:6379"
+    interval: 30s
+    conditions:
+      - "[CONNECTED] == true"
+    alerts:
+      - type: ntfy
+
+  # ── nuc25: Web Tools ──────────────────────────────────────────────────────
+
+  - name: SearXNG
+    group: "nuc25 — Web Tools"
+    url: "http://searxng:8080/healthz"
+    description: "SearXNG meta search engine | docker network: searxng:8080 | external: localhost:8888"
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+    alerts:
+      - type: ntfy
+
+  - name: Spider Local
+    group: "nuc25 — Web Tools"
+    url: "http://spider-local:8000/health"
+    description: "Spider local web crawler | docker network: spider-local:8000 | internal only"
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+    alerts:
+      - type: ntfy
+
+  - name: RAG-MCP
+    group: "nuc25 — Web Tools"
+    url: "http://rag-mcp:8000/health"
+    description: "RAG MCP server | docker network: rag-mcp:8000 | external: localhost:8765"
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+    alerts:
+      - type: ntfy
+
+  # ── nuc25: Observability ──────────────────────────────────────────────────
+
+  - name: Langfuse
+    group: "nuc25 — Observability"
+    url: "http://langfuse-web:3000/api/public/health"
+    description: "Langfuse LLM observability | docker network: langfuse-web:3000 | external: localhost:3000"
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY].status == OK"
+    alerts:
+      - type: ntfy
+
+  - name: PaddleOCR
+    group: "nuc25 — Observability"
+    url: "http://paddleocr:8000/health"
+    description: "PaddleOCR service | docker network: paddleocr:8000 | external: localhost:8003"
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+    alerts:
+      - type: ntfy
+
+  # ── nuc25: Apps ───────────────────────────────────────────────────────────
+
+  - name: Nextcloud
+    group: "nuc25 — Apps"
+    # Routes via rag-ingress → aio Caddy (alias aio-ingress) → nextcloud-aio-apache:11000.
+    # HTTP (not HTTPS) avoids Tailscale cert mismatch; Host header selects the right Caddy site.
+    # 502 = apache down (AIO not started); 200 + JSON = healthy.
+    url: "http://aio-ingress/status.php"
+    headers:
+      Host: "cloud.taildec1bd.ts.net"
+    description: "Nextcloud server | rag-ingress→aio-caddy→apache:11000 | external: cloud.taildec1bd.ts.net (via Tailscale) | admin: https://localhost:8080"
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY].installed == true"
+      - "[BODY].maintenance == false"
+    alerts:
+      - type: ntfy
+
+  - name: Paperless-ngx
+    group: "nuc25 — Apps"
+    # Routes via rag-ingress; paperless-webserver is on rag-ingress (left nextcloud-aio).
+    # Root URL redirects to /accounts/login/ with 302 — use < 400 to accept the redirect.
+    url: "http://paperless-webserver:8000/"
+    description: "Paperless document management | rag-ingress: paperless-webserver:8000 | external: cloud.taildec1bd.ts.net:8010 (via Tailscale)"
+    interval: 60s
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  # ── macstudio: ML Services ────────────────────────────────────────────────
+
+  - name: MLX Gateway (vMLX)
+    group: "macstudio — ML Services"
+    url: "http://${MACSTUDIO_IP}:8080/health"
+    description: "MLX LLM gateway (vMLX) | host: ${MACSTUDIO_IP}:8080 | external: http://${MACSTUDIO_IP}:8080"
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY].status == ok"
+    alerts:
+      - type: ntfy
+
+  - name: vllm-metal (PaddleOCR backend)
+    group: "macstudio — ML Services"
+    url: "http://${MACSTUDIO_IP}:8000/health"
+    description: "mlx-vlm server for PaddleOCR-VL inference | host: ${MACSTUDIO_IP}:8000 | launchd: com.macaistack.vllm-paddle | logs: ~/Library/Logs/macaistack-vllm-paddle.log"
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY].status == healthy"
+    alerts:
+      - type: ntfy
+
+  - name: Infinity (Embedding/Rerank)
+    group: "macstudio — ML Services"
+    url: "http://${MACSTUDIO_IP}:7997/health"
+    description: "Infinity embedding/reranking service | host: ${MACSTUDIO_IP}:7997 | external: http://${MACSTUDIO_IP}:7997"
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+    alerts:
+      - type: ntfy
+
+  - name: Unsloth Studio
+    group: "macstudio — ML Services"
+    url: "http://${MACSTUDIO_IP}:8888/"
+    description: "Unsloth Studio fine-tuning | host: ${MACSTUDIO_IP}:8888 | external: http://${MACSTUDIO_IP}:8888"
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+    alerts:
+      - type: ntfy
