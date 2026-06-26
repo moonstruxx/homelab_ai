@@ -70,7 +70,11 @@ Three functional groups of services:
 - `ragflow` — main application: serves UI (port 80/443), Python API (9380), Admin API (9381), MCP server (9382)
 
 ### OCR (always on)
-- `paddleocr` — PaddleOCR-VL API server (OpenAI-compatible); port `${PADDLEOCR_PORT:-8010}`; offloads inference to mlx-vlm server on `macstudio.local:8000` (model: `PaddlePaddle/PaddleOCR-VL`)
+- `paddleocr` — PaddleOCR-VL API server; port `${PADDLEOCR_PORT:-8010}`; built from `paddleocr/`. Exposes three endpoints:
+  - `GET /health` — checks macstudio VLM backend is reachable; returns 503 if macstudio is down
+  - `POST /ocr` — single-image OCR (multipart file upload); returns `{"text": "..."}`.
+  - `POST /api/v2/ocr/jobs` — **PDF OCR used by RAGFlow v0.26+**; accepts JSON `{"file": "<base64_pdf>", "fileType": 0}`; renders each page via pypdfium2, calls the VLM per page, returns `{"errorCode": 0, "result": {"layoutParsingResults": [...]}}` matching RAGFlow's `_transfer_to_sections` contract.
+  Inference offloaded to mlx-vlm server on `macstudio.local:8000` (model: `PaddlePaddle/PaddleOCR-VL`). Configure the base URL in RAGFlow UI as `http://paddleocr:8000` — RAGFlow appends `/api/v2/ocr/jobs` automatically from `conf/models/paddleocr.json`.
 
 ### Web Scraping (profile: `webscrape`)
 - `searxng` — metasearch engine, config in `searxng/settings.yml`, host port 8088 → container 8080 (JSON API enabled)

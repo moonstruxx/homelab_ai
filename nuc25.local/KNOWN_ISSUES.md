@@ -67,6 +67,22 @@ Python module initialisation, which fails without Tor.
 
 ---
 
+## paddleocr: PDFium "Data format error" in __images__ (WARNING)
+
+**Symptom:** During PDF ingestion, ragflow task executor logs:
+  ERROR: Failed to load document (PDFium: Data format error).
+  pypdfium2._helpers.misc.PdfiumError: Failed to load document (PDFium: Data format error).
+
+**Root cause (suspected):** The `__images__` method in `paddleocr_parser.py` renders PDF pages locally in the ragflow container using pypdfium2, for the cropping/thumbnail feature. The error may indicate that binary data fetched from MinIO is being passed to pypdfium2 in an unexpected form — possibly if `EncryptedStorageWrapper` is active and files were stored before encryption was enabled (no magic header, decrypt returns garbage), or if the PDF files are non-standard.
+
+**Impact:** Non-fatal — the exception is caught and execution continues to the `POST /api/v2/ocr/jobs` call, which is the actual OCR path. Text extraction and document indexing succeed regardless. Only the layout-crop/thumbnail feature is degraded.
+
+**Investigation:** `docker exec rag_ai_stack-ragflow-1 env | grep RAGFLOW_CRYPTO` — if `RAGFLOW_CRYPTO_ENABLED=true`, verify `CryptoUtil.decrypt()` (`ragflow/common/crypto_utils.py`) returns original bytes unchanged when the `RAGF` magic header is absent.
+
+**Status:** Under investigation. Not blocking ingestion.
+
+---
+
 ## searxng: X-Forwarded-For header missing (WARNING)
 
 **Symptom:** Periodic log entry:

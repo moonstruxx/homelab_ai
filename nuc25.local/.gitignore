@@ -18,6 +18,7 @@ ragflow-logs/
 logs.txt
 issues.txt
 openissues.txt
+.setup-config.md
 
 # Editor
 .vscode/
