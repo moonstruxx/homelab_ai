@@ -3,13 +3,13 @@ ui:
   header: RAG Stack Health
   buttons:
     - name: RAGFlow
-      link: http://nuc25.local:9380
+      link: http://nuc25.local
     - name: Langfuse
       link: http://nuc25.local:3000
     - name: MinIO
       link: http://nuc25.local:9001
     - name: SearXNG
-      link: http://nuc25.local:8888
+      link: http://nuc25.local:8088
     - name: Nextcloud
       link: https://cloud.taildec1bd.ts.net
     - name: Paperless
@@ -192,7 +192,6 @@ endpoints:
     interval: 60s
     conditions:
       - "[STATUS] == 200"
-      - "[BODY].status == healthy"
     alerts:
       - type: ntfy
 

@@ -53,7 +53,8 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
-    # No host publish: only ragflow uses MinIO, over the internal rag-data network.
+    ports:
+      - "0.0.0.0:${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - ./srv/stack/minio:/data
     healthcheck:
@@ -191,7 +192,7 @@ services:
       SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://localhost:8088/}
       SEARXNG_INSTANCE_NAME: ${SEARXNG_INSTANCE_NAME:-SearXNG-RAG}
     ports:
-      - 127.0.0.1:${SEARXNG_PORT:-8088}:8080
+      - 0.0.0.0:${SEARXNG_PORT:-8088}:8080
     volumes:
       - ./searxng:/etc/searxng
     ulimits:
@@ -529,7 +530,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - wud_data:/store
     ports:
-      - 127.0.0.1:${WUD_PORT:-3002}:3000
+      - 0.0.0.0:${WUD_PORT:-3002}:3000
     environment:
       WUD_LOG_LEVEL: warn
       # Opt-in mode: only watch containers that explicitly set wud.watch=true.
@@ -556,7 +557,7 @@ services:
     volumes:
       - ntfy_data:/var/lib/ntfy
     ports:
-      - "127.0.0.1:${NTFY_PORT:-5555}:80"
+      - "0.0.0.0:${NTFY_PORT:-5555}:80"
     healthcheck:
       <<: *health_defaults
       test: ["CMD-SHELL", "wget -qO- http://localhost:80/v1/health || exit 1"]

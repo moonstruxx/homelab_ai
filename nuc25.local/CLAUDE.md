@@ -56,9 +56,9 @@ Services run across three Docker bridge networks:
 - **`rag-ingress`** (external, pre-created) — thin cross-stack bridge. Only `gatus` joins it from this stack, to health-check Nextcloud and Paperless via the `aio-ingress` alias on the AIO tailscale container. Created once: `docker network create rag-ingress`.
 
 **Host-port exposure policy:**
-- **LAN-accessible (0.0.0.0):** RAGFlow web UI (80/443), RAGFlow API (9380), MCP server (9382), Langfuse UI (3000)
-- **Loopback only (127.0.0.1):** RAGFlow admin/go ports (9381/9383/9384), PaddleOCR (8010), SearXNG (8088), spider-local (11235), rag-mcp (11236), langfuse-minio (9090), WUD (3002), Gatus (8090), ntfy (5555)
-- **No host publish** (intra-stack via `rag-data` only): mysql, redis, elasticsearch, minio
+- **LAN-accessible (0.0.0.0):** RAGFlow web UI (80/443), RAGFlow API (9380), MCP server (9382), Langfuse UI (3000), MinIO console (9001), SearXNG (8088), WUD (3002), ntfy (5555), Gatus (8090)
+- **Loopback only (127.0.0.1):** RAGFlow admin/go ports (9381/9383/9384), PaddleOCR (8010), spider-local (11235), rag-mcp (11236), langfuse-minio (9090)
+- **No host publish** (intra-stack via `rag-data` only): mysql, redis, elasticsearch, minio S3 API (port 9000; console 9001 is LAN-accessible)
 
 Three functional groups of services:
 
