@@ -16,3 +16,6 @@
 [submodule "macstudio.local/wyoming-whisper-cpp"]
 	path = macstudio.local/wyoming-whisper-cpp
 	url = https://github.com/rhasspy/wyoming-whisper-cpp.git
+[submodule "macstudio.local/mlx-vlm"]
+	path = macstudio.local/mlx-vlm
+	url = https://github.com/Blaizzy/mlx-vlm.git

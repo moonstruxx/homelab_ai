@@ -18,6 +18,7 @@ This is a monorepo of git submodules, each providing a different AI inference se
 | `anemll-server` | Apple Neural Engine (CoreML) | 8000 | FastAPI server for ANE-optimized `.mlmodelc` models |
 | `infinity` | torch/MPS | 7997 | Embedding (`BAAI/bge-m3`) + rerank (`BAAI/bge-reranker-v2-m3`) |
 | `vllm-metal` | vLLM + MLX | configurable | vLLM plugin for Apple Silicon; MLX as primary compute backend |
+| `mlx-vlm` | MLX | — | MLX vision-language model library (used as vllm-metal dependency for PaddleOCR-VL) |
 | `wyoming-whisper-cpp` | whisper.cpp | 10300 (Wyoming) | Speech-to-text bridge for Home Assistant voice pipelines |
 
 
@@ -152,9 +153,9 @@ DO_NOT_TRACK=1 TOKENIZERS_PARALLELISM=false \
   --host 192.168.1.114 --port 7997
 ```
 
-## mlx-vlm (PaddleOCR backend)
+## vllm-metal (PaddleOCR backend)
 
-mlx-vlm server serving `PaddlePaddle/PaddleOCR-VL` on `0.0.0.0:8000`. Uses the mlx-vlm HTTP server (not vllm-metal) because PaddleOCR-VL's attention architecture is incompatible with vllm-metal 0.2.0. The RAGFlow paddleocr container on nuc25.local connects here as `http://macstudio.local:8000/v1` with model ID `PaddlePaddle/PaddleOCR-VL`.
+vllm serve (vllm-metal) serving `PaddlePaddle/PaddleOCR-VL` (alias `PaddleOCR-VL-0.9B`) on `0.0.0.0:8000`. The RAGFlow paddleocr container on nuc25.local connects here as `http://macstudio.local:8000/v1` with model ID `PaddleOCR-VL-0.9B`.
 
 **Runs as the `com.macaistack.vllm-paddle` LaunchAgent** — auto-restarts on crash (`KeepAlive`).
 
@@ -164,11 +165,9 @@ tail -f ~/Library/Logs/macaistack-vllm-paddle.log                 # logs
 curl http://localhost:8000/health                                  # check status
 ```
 
-**Run script:** `services/run-vllm-paddle.sh` — invokes `python -m mlx_vlm.server --model PaddlePaddle/PaddleOCR-VL --host 0.0.0.0 --port 8000`
+**Run script:** `services/run-vllm-paddle.sh` — invokes `vllm serve` with `--mm-processor-kwargs '{"max_pixels": 1503680}'` to cap vision-encoder input (limits prefill to ~2s for A4 pages at 150dpi). Venv: `~/.venv-vllm-metal`.
 
-**Health endpoint:** `GET /health` -> `{"status":"healthy","loaded_model":"PaddlePaddle/PaddleOCR-VL"}`
-
-The venv at `~/.venv-vllm-metal` also contains mlx-vlm (installed as a vllm-metal dependency).
+**Health endpoint:** `GET /health` → OpenAI-compatible liveness response.
 
 ## wyoming-whisper-cpp
 

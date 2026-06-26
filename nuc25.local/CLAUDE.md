@@ -24,7 +24,7 @@ This stack spans two machines:
 
 Services on both hosts share the same logical stack; RAGFlow on nuc25.local connects to macstudio.local for model inference and embeddings.
 
-**Sister stack on macstudio:** The macstudio services live in `~/git/homelab_ai/macstudio.local/` (same monorepo, locally accessible). To run commands on macstudio, SSH: `ssh macstudio` (configured in `~/.ssh/config` with `id_hetzner`). The **mlx-vlm server** (`com.macaistack.vllm-paddle` launchd agent) serves PaddleOCR-VL on port 8000; it uses `mlx_vlm.server` (not `vllm serve`) because PaddleOCR-VL's attention architecture is incompatible with vllm-metal 0.2.0. When this service is down, the `paddleocr` container on nuc25 returns HTTP 503 on `/health` (and Gatus alerts). Restart: `ssh macstudio launchctl kickstart -k gui/$(ssh macstudio id -u)/com.macaistack.vllm-paddle`.
+**Sister stack on macstudio:** The macstudio services live in `~/git/homelab_ai/macstudio.local/` (same monorepo, locally accessible). To run commands on macstudio, SSH: `ssh macstudio` (configured in `~/.ssh/config` with `id_hetzner`). The **vllm serve** (`com.macaistack.vllm-paddle` launchd agent) serves PaddleOCR-VL on port 8000 via vllm-metal; model alias `PaddleOCR-VL-0.9B`. When this service is down, the `paddleocr` container on nuc25 returns HTTP 503 on `/health` (and Gatus alerts). Restart: `ssh macstudio launchctl kickstart -k gui/$(ssh macstudio id -u)/com.macaistack.vllm-paddle`.
 
 ## Common Operations
 
