@@ -83,6 +83,28 @@ Python module initialisation, which fails without Tor.
 
 ---
 
+## ragflow: sniffio AsyncLibraryNotFoundError during async stream GC (Exception ignored)
+
+**Symptom:** ragflow logs emit pairs of `Exception ignored in:` tracebacks during LLM calls:
+  Exception ignored in: <async_generator object AsyncStream.__stream__ at 0x...>
+  sniffio._impl.AsyncLibraryNotFoundError: unknown async library, or not in async context
+  Exception ignored in: <async_generator object HTTP11ConnectionByteStream.__aiter__ at 0x...>
+  sniffio._impl.AsyncLibraryNotFoundError: unknown async library, or not in async context
+
+**Root cause:** Two-part:
+1. `httpcore` 1.0.9 (bundled in the ragflow venv) calls `sniffio.current_async_library()` eagerly in `AsyncShieldCancellation.__init__`. When Python 3.13's GC finalizes an abandoned async generator outside an event loop, sniffio cannot find the async library and raises `AsyncLibraryNotFoundError`. Fixed upstream in httpcore ≥ 1.0.10.
+2. The streams are abandoned (not `aclose()`d) because an exception in RAGFlow's LLM calling code unwinds the stack without closing the httpx/openai response. The most common trigger is the Apple ANE locale error (see above).
+
+**Impact:** Non-fatal — `Exception ignored in:` means Python swallows these during GC. LLM calls and document indexing are unaffected. Abandoned connections may not return to the httpcore pool cleanly, causing gradual pool bloat over extended uptime.
+
+**Fix options:**
+- Upgrade httpcore in the ragflow venv (`pip install 'httpcore>=1.0.10'` inside the container, or pin it in the image build). Not persistent across container rebuilds without a Dockerfile change.
+- Eliminate the underlying LLM error: switch affected knowledge bases from the Apple ANE model to the MLX Studio model (see "LLM unsupported language or locale error" above). Removes the most common trigger.
+
+**Status:** Known noise. Monitor connection pool health if ragflow becomes unresponsive to LLM calls after long uptime.
+
+---
+
 ## searxng: X-Forwarded-For header missing (WARNING)
 
 **Symptom:** Periodic log entry:
