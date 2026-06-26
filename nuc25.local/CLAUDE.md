@@ -70,11 +70,13 @@ Three functional groups of services:
 - `ragflow` — main application: serves UI (port 80/443), Python API (9380), Admin API (9381), MCP server (9382)
 
 ### OCR (always on)
-- `paddleocr` — PaddleOCR-VL API server; port `${PADDLEOCR_PORT:-8010}`; built from `paddleocr/`. Exposes three endpoints:
+- `paddleocr` — PaddleOCR-VL API server; port `${PADDLEOCR_PORT:-8010}`; built from `paddleocr/`. Implements the **async job protocol** used by RAGFlow (submit → poll → fetch):
   - `GET /health` — checks macstudio VLM backend is reachable; returns 503 if macstudio is down
-  - `POST /ocr` — single-image OCR (multipart file upload); returns `{"text": "..."}`.
-  - `POST /api/v2/ocr/jobs` — **PDF OCR used by RAGFlow v0.26+**; accepts JSON `{"file": "<base64_pdf>", "fileType": 0}`; renders each page via pypdfium2, calls the VLM per page, returns `{"errorCode": 0, "result": {"layoutParsingResults": [...]}}` matching RAGFlow's `_transfer_to_sections` contract.
-  Inference offloaded to mlx-vlm server on `macstudio.local:8000` (model: `PaddlePaddle/PaddleOCR-VL`). Configure the base URL in RAGFlow UI as `http://paddleocr:8000` — RAGFlow appends `/api/v2/ocr/jobs` automatically from `conf/models/paddleocr.json`.
+  - `POST /ocr` — single-image OCR (multipart file upload, legacy); returns `{"text": "..."}`.
+  - `POST /api/v2/ocr/jobs` — **PDF submit**: accepts multipart form with fields `file` (PDF bytes), `model` (algorithm name), `optionalPayload` (JSON string); starts background OCR and returns `{"errorCode": 0, "data": {"jobId": "<uuid>"}}`.
+  - `GET /api/v2/ocr/jobs/{job_id}` — **poll**: returns `{"errorCode": 0, "data": {"state": "processing|done|failed", "resultJsonUrl": "..."}}`. When done, `resultJsonUrl` points to the result endpoint below.
+  - `GET /api/v2/ocr/jobs/{job_id}/result` — **fetch JSONL result**: returns one JSON line `{"result": {"layoutParsingResults": [...]}}` matching RAGFlow's `_transfer_to_sections` contract.
+  Inference offloaded to mlx-vlm server on `macstudio.local:8000` (model ID: `PaddleOCR-VL-0.9B`, set via `PADDLEOCR_VLLM_MODEL` in `.env`). Configure the base URL in RAGFlow UI as `http://paddleocr:8000` — RAGFlow appends `/api/v2/ocr/jobs` automatically.
 
 ### Web Scraping (profile: `webscrape`)
 - `searxng` — metasearch engine, config in `searxng/settings.yml`, host port 8088 → container 8080 (JSON API enabled)
