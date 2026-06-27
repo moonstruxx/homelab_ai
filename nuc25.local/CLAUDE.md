@@ -70,13 +70,10 @@ Three functional groups of services:
 - `ragflow` — main application: serves UI (port 80/443), Python API (9380), Admin API (9381), MCP server (9382)
 
 ### OCR (always on)
-- `paddleocr` — PaddleOCR-VL API server; port `${PADDLEOCR_PORT:-8010}`; built from `paddleocr/`. Implements the **async job protocol** used by RAGFlow (submit → poll → fetch):
+- `paddleocr` — PaddleOCR-VL proxy; port `${PADDLEOCR_PORT:-8010}`; built from `paddleocr/`. Implements the **synchronous JSON API** that RAGFlow's `PaddleOCRParser` calls (`deepdoc/parser/paddleocr_parser.py`):
   - `GET /health` — checks macstudio VLM backend is reachable; returns 503 if macstudio is down
-  - `POST /ocr` — single-image OCR (multipart file upload, legacy); returns `{"text": "..."}`.
-  - `POST /api/v2/ocr/jobs` — **PDF submit**: accepts multipart form with fields `file` (PDF bytes), `model` (algorithm name), `optionalPayload` (JSON string); starts background OCR and returns `{"errorCode": 0, "data": {"jobId": "<uuid>"}}`.
-  - `GET /api/v2/ocr/jobs/{job_id}` — **poll**: returns `{"errorCode": 0, "data": {"state": "processing|done|failed", "resultJsonUrl": "..."}}`. When done, `resultJsonUrl` points to the result endpoint below.
-  - `GET /api/v2/ocr/jobs/{job_id}/result` — **fetch JSONL result**: returns one JSON line `{"result": {"layoutParsingResults": [...]}}` matching RAGFlow's `_transfer_to_sections` contract.
-  Inference offloaded to mlx-vlm server on `macstudio.local:8000` (model ID: `PaddleOCR-VL-0.9B`, set via `PADDLEOCR_VLLM_MODEL` in `.env`). Configure the base URL in RAGFlow UI as `http://paddleocr:8000` — RAGFlow appends `/api/v2/ocr/jobs` automatically.
+  - `POST /` — RAGFlow posts JSON `{"file": "<base64 PDF/image>", "fileType": 0}` directly to the configured API URL (no path appended); renders PDF pages with pypdfium2, runs each through the VLM on macstudio, returns `{"errorCode": 0, "result": {"layoutParsingResults": [...]}}`.
+  Inference offloaded to mlx-vlm server on `macstudio.local:8000` (model ID: `PaddleOCR-VL-0.9B`, set via `PADDLEOCR_VLLM_MODEL` in `.env`). **RAGFlow UI config**: API URL = `http://paddleocr:8000`, Algorithm = `PaddleOCR-VL`. Model name is a free-form label (e.g. `PaddleOCR-VL`).
 
 ### Web Scraping (profile: `webscrape`)
 - `searxng` — metasearch engine, config in `searxng/settings.yml`, host port 8088 → container 8080 (JSON API enabled)
