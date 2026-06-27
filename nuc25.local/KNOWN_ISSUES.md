@@ -61,7 +61,7 @@ Python module initialisation, which fails without Tor.
 
 **Impact:** RAPTOR summaries and GraphRAG entity/community graphs are not built for affected documents. Base chunking and embedding succeed — documents are indexed and searchable, but without the hierarchical RAPTOR layer or graph context.
 
-**Workaround:** Switch the knowledge base's chunk LLM to the MLX Studio model (MLX Gateway on `macstudio.local:8080`) which handles arbitrary content. Change via RAGFlow UI: Knowledge Base → Settings → Model → LLM.
+**Workaround:** Switch the knowledge base's chunk LLM to the apple-on-device-openai model (`macstudio.local:8080`) which handles arbitrary content. Change via RAGFlow UI: Knowledge Base → Settings → Model → LLM.
 
 **Status:** Under investigation. Root cause on the Apple ANE server side not yet confirmed.
 
@@ -99,7 +99,7 @@ Python module initialisation, which fails without Tor.
 
 **Fix options:**
 - Upgrade httpcore in the ragflow venv (`pip install 'httpcore>=1.0.10'` inside the container, or pin it in the image build). Not persistent across container rebuilds without a Dockerfile change.
-- Eliminate the underlying LLM error: switch affected knowledge bases from the Apple ANE model to the MLX Studio model (see "LLM unsupported language or locale error" above). Removes the most common trigger.
+- Eliminate the underlying LLM error: switch affected knowledge bases from the Apple ANE model to the apple-on-device-openai model (see "LLM unsupported language or locale error" above). Removes the most common trigger.
 
 **Status:** Known noise. Monitor connection pool health if ragflow becomes unresponsive to LLM calls after long uptime.
 

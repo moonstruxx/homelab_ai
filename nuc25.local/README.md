@@ -7,7 +7,7 @@ Self-hosted RAG stack on **nuc25.local** — RAGFlow + Elasticsearch + Langfuse 
 | Host | Role |
 |------|------|
 | `nuc25.local` | RAGFlow core, Langfuse, web scraping — this repo |
-| `macstudio.local` | GPU/ANE services: Infinity (embed/rerank), MLX Studio, vllm-metal (PaddleOCR inference), Wyoming Whisper |
+| `macstudio.local` | GPU/ANE services: Infinity (embed/rerank), apple-on-device-openai (Apple Intelligence, port 8080), vllm-metal (PaddleOCR inference), Wyoming Whisper |
 
 ## Quick Start
 
@@ -58,7 +58,7 @@ Set active profiles via `COMPOSE_PROFILES` in `.env`:
 | nuc25 — Web Tools | SearXNG, spider-local, rag-mcp |
 | nuc25 — Observability | Langfuse |
 | nuc25 — Apps | Nextcloud, Paperless-ngx |
-| macstudio — ML Services | MLX Gateway, Infinity, vllm-metal, Wyoming Whisper |
+| macstudio — ML Services | apple-on-device-openai, Infinity, vllm-metal, Wyoming Whisper |
 
 **ntfy** (port 5555) is the push notification backend. Two topics:
 - `rag-stack` — Gatus health alerts

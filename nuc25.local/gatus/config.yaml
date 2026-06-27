@@ -14,7 +14,7 @@ ui:
       link: https://cloud.taildec1bd.ts.net
     - name: Paperless
       link: https://cloud.taildec1bd.ts.net:8010
-    - name: MLX Gateway
+    - name: apple-on-device-openai
       link: http://${MACSTUDIO_IP}:8080
     - name: WUD
       link: http://nuc25.local:3002
@@ -174,10 +174,10 @@ endpoints:
 
   # ── macstudio: ML Services ────────────────────────────────────────────────
 
-  - name: MLX Gateway (vMLX)
+  - name: apple-on-device-openai
     group: "macstudio — ML Services"
     url: "http://${MACSTUDIO_IP}:8080/health"
-    description: "MLX LLM gateway (vMLX) | host: ${MACSTUDIO_IP}:8080 | external: http://${MACSTUDIO_IP}:8080"
+    description: "Apple Intelligence (FoundationModels) OpenAI-compatible API | host: ${MACSTUDIO_IP}:8080 | submodule: apple-on-device-openai"
     interval: 60s
     conditions:
       - "[STATUS] == 200"

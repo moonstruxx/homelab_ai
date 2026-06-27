@@ -20,7 +20,7 @@ This stack spans two machines:
 | Host | Role |
 |------|------|
 | `nuc25.local` | RAGFlow core, observability (Langfuse), web scraping — **this directory** (`~/git/homelab_ai/nuc25.local`) |
-| `macstudio.local` | GPU/ANE services — **`~/git/homelab_ai/macstudio.local`** (same monorepo): Infinity (embedding/rerank), MLX Studio/vMLX gateway (general model serving on port 8080), mlx-vlm server (PaddleOCR inference on port 8000 via `com.macaistack.vllm-paddle` launchd), Apple ANE on-device model, Wyoming Whisper (speech-to-text) |
+| `macstudio.local` | GPU/ANE services — **`~/git/homelab_ai/macstudio.local`** (same monorepo): Infinity (embedding/rerank), apple-on-device-openai (Apple Intelligence via FoundationModels, port 8080), mlx-vlm server (PaddleOCR inference on port 8000 via `com.macaistack.vllm-paddle` launchd), anemll-server (ANE/CoreML, port 8000), Wyoming Whisper (speech-to-text) |
 
 Services on both hosts share the same logical stack; RAGFlow on nuc25.local connects to macstudio.local for model inference and embeddings.
 
@@ -93,7 +93,7 @@ Three functional groups of services:
 
 ### Health Monitoring (always on)
 - `ntfy` — self-hosted push notification server; port `${NTFY_PORT:-5555}`; data in named volume `ntfy_data`. Topics: `rag-stack` (Gatus health alerts), `rag-stack-updates` (WUD image update alerts). Subscribe via ntfy app at `https://{TS_HOSTNAME}.{TS_TAILNET}:5555`.
-- `gatus` — config-as-code health monitor; status page at port `${GATUS_PORT:-8090}`; config in `gatus/config.yaml`. Monitors 16 endpoints across nuc25 (RAG core, web tools, Langfuse, Nextcloud, Paperless) and macstudio (MLX Gateway, Infinity, Unsloth Studio). Alerts to ntfy after 3 consecutive failures; notifies on recovery. Elasticsearch auth uses URL-embedded credentials (`http://elastic:<password>@elasticsearch:9200/...`) to bypass Gatus header parsing issues. Nextcloud and Paperless checks go via `rag-ingress` → `aio-ingress` (the AIO Caddy alias); see `gatus/config.yaml` for the Host-header routing.
+- `gatus` — config-as-code health monitor; status page at port `${GATUS_PORT:-8090}`; config in `gatus/config.yaml`. Monitors 16 endpoints across nuc25 (RAG core, web tools, Langfuse, Nextcloud, Paperless) and macstudio (apple-on-device-openai, Infinity, vllm-metal). Alerts to ntfy after 3 consecutive failures; notifies on recovery. Elasticsearch auth uses URL-embedded credentials (`http://elastic:<password>@elasticsearch:9200/...`) to bypass Gatus header parsing issues. Nextcloud and Paperless checks go via `rag-ingress` → `aio-ingress` (the AIO Caddy alias); see `gatus/config.yaml` for the Host-header routing.
 - `wud` — What's Up Docker; dashboard at port 3002; notify-only (no auto-updates). WUD labels per service control which tags trigger notifications (see three-tier strategy below). Image update alerts forwarded to ntfy topic `rag-stack-updates`.
 
 ### Tailscale VPN Access (profile: `tailscale`)
