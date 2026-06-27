@@ -70,10 +70,12 @@ Three functional groups of services:
 - `ragflow` — main application: serves UI (port 80/443), Python API (9380), Admin API (9381), MCP server (9382)
 
 ### OCR (always on)
-- `paddleocr` — PaddleOCR-VL proxy; port `${PADDLEOCR_PORT:-8010}`; built from `paddleocr/`. Implements the **synchronous JSON API** that RAGFlow's `PaddleOCRParser` calls (`deepdoc/parser/paddleocr_parser.py`):
+- `paddleocr` — PaddleOCR-VL proxy; port `${PADDLEOCR_PORT:-8010}`; built from `paddleocr/`. Implements the **async job protocol** that RAGFlow's running container calls (`deepdoc/parser/paddleocr_parser.py` in the Docker image, which differs from the submodule):
   - `GET /health` — checks macstudio VLM backend is reachable; returns 503 if macstudio is down
-  - `POST /` — RAGFlow posts JSON `{"file": "<base64 PDF/image>", "fileType": 0}` directly to the configured API URL (no path appended); renders PDF pages with pypdfium2, runs each through the VLM on macstudio, returns `{"errorCode": 0, "result": {"layoutParsingResults": [...]}}`.
-  Inference offloaded to mlx-vlm server on `macstudio.local:8000` (model ID: `PaddleOCR-VL-0.9B`, set via `PADDLEOCR_VLLM_MODEL` in `.env`). **RAGFlow UI config**: API URL = `http://paddleocr:8000`, Algorithm = `PaddleOCR-VL`. Model name is a free-form label (e.g. `PaddleOCR-VL`).
+  - `POST /api/v2/ocr/jobs` — multipart form (`file`, `model`, `optionalPayload`); starts background VLM OCR; returns `{"errorCode": 0, "data": {"jobId": "..."}}`.
+  - `GET /api/v2/ocr/jobs/{job_id}` — poll; returns `{"errorCode": 0, "data": {"state": "processing|done|failed", "resultJsonUrl": "..."}}`.
+  - `GET /api/v2/ocr/jobs/{job_id}/result` — JSONL result; returns `{"result": {"layoutParsingResults": [...]}}`.
+  Inference offloaded to mlx-vlm server on `macstudio.local:8000` (model ID: `PaddleOCR-VL-0.9B`, set via `PADDLEOCR_VLLM_MODEL` in `.env`). **RAGFlow UI config**: Base URL = `http://paddleocr:8000`, Algorithm = `PaddleOCR-VL` (must be exactly this string — `PaddleOCR-VL-1.6` or similar will fail validation).
 
 ### Web Scraping (profile: `webscrape`)
 - `searxng` — metasearch engine, config in `searxng/settings.yml`, host port 8088 → container 8080 (JSON API enabled)
