@@ -227,3 +227,13 @@ endpoints:
       - "[BODY].status == ok"
     alerts:
       - type: ntfy
+
+  - name: Wyoming Whisper
+    group: "macstudio — ML Services"
+    url: "tcp://${MACSTUDIO_IP}:10300"
+    description: "Wyoming Whisper speech-to-text bridge | host: ${MACSTUDIO_IP}:10300 | launchd: com.macaistack.wyoming | logs: ~/Library/Logs/macaistack-wyoming.log | Wyoming protocol"
+    interval: 60s
+    conditions:
+      - "[CONNECTED] == true"
+    alerts:
+      - type: ntfy
