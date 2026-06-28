@@ -24,7 +24,7 @@ client = AsyncOpenAI(
     api_key=VLLM_API_KEY,
     http_client=httpx.AsyncClient(
         transport=httpx.AsyncHTTPTransport(retries=1),
-        timeout=httpx.Timeout(60.0),
+        timeout=httpx.Timeout(120.0),
     ),
 )
 
@@ -36,6 +36,10 @@ OCR_PROMPT = (
 # In-memory job store: job_id -> {state, result, errorMsg, created_at}
 _jobs: dict[str, dict] = {}
 _JOB_TTL = 3600  # seconds
+
+# How many pages to OCR concurrently per PDF. vLLM batches these via continuous
+# batching, so raising this trades client/vLLM load for throughput. Env-tunable.
+PAGE_CONCURRENCY = int(os.environ.get("PADDLEOCR_PAGE_CONCURRENCY", "8"))
 
 
 @app.get("/health")
@@ -64,6 +68,29 @@ async def models():
     return resp.json()
 
 
+async def _ocr_one_page(img, sem: asyncio.Semaphore) -> str:
+    """OCR a single rendered page image. Bounded by the shared semaphore."""
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    b64_img = base64.b64encode(buf.getvalue()).decode()
+    async with sem:
+        response = await client.chat.completions.create(
+            model=VLLM_MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_img}"}},
+                        {"type": "text", "text": OCR_PROMPT},
+                    ],
+                }
+            ],
+            max_tokens=2048,
+            temperature=0,
+        )
+    return response.choices[0].message.content or ""
+
+
 async def _run_ocr_job(job_id: str, pdf_bytes: bytes) -> None:
     """Background task: render each PDF page and run VLM OCR."""
     try:
@@ -80,33 +107,27 @@ async def _run_ocr_job(job_id: str, pdf_bytes: bytes) -> None:
             _jobs[job_id].update({"state": "failed", "errorMsg": "PDF has no pages"})
             return
 
+        # OCR pages concurrently (bounded) so vLLM can batch them via continuous
+        # batching. gather preserves page order; a failing page yields a placeholder
+        # so one bad page never fails the whole job.
+        sem = asyncio.Semaphore(PAGE_CONCURRENCY)
+        texts = await asyncio.gather(
+            *(_ocr_one_page(img, sem) for img in page_images),
+            return_exceptions=True,
+        )
+
         layout_parsing_results = []
-        for img in page_images:
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            b64_img = base64.b64encode(buf.getvalue()).decode()
-
-            response = await client.chat.completions.create(
-                model=VLLM_MODEL,
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_img}"}},
-                        {"type": "text", "text": OCR_PROMPT},
-                    ],
-                }],
-                max_tokens=2048,
-                temperature=0,
-            )
-            text = response.choices[0].message.content or ""
-
+        for img, result in zip(page_images, texts):
+            block_content = "[OCR failed]" if isinstance(result, Exception) else result.strip()
             layout_parsing_results.append({
                 "prunedResult": {
-                    "parsing_res_list": [{
-                        "block_content": text.strip(),
-                        "block_label": "text",
-                        "block_bbox": [0, 0, img.width, img.height],
-                    }]
+                    "parsing_res_list": [
+                        {
+                            "block_content": block_content,
+                            "block_label": "text",
+                            "block_bbox": [0, 0, img.width, img.height],
+                        }
+                    ]
                 }
             })
 

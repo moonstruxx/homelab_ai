@@ -165,7 +165,12 @@ tail -f ~/Library/Logs/macaistack-vllm-paddle.log                 # logs
 curl http://localhost:8000/health                                  # check status
 ```
 
-**Run script:** `services/run-vllm-paddle.sh` — invokes `vllm serve` with `--mm-processor-kwargs '{"max_pixels": 1503680}'` to cap vision-encoder input (limits prefill to ~2s for A4 pages at 150dpi). Venv: `~/.venv-vllm-metal`.
+**Run script:** `services/run-vllm-paddle.sh` — invokes `vllm serve` with:
+- `--mm-processor-kwargs '{"max_pixels": 1503680}'` — caps vision-encoder input (limits prefill to ~2s for A4 pages at 150dpi).
+- `--gpu-memory-utilization 0.20` — **the only flag that bounds memory.** vLLM's default (0.9) preallocates a KV cache to fill ~90% of the 128GB unified memory (~5.5M tokens, 41x concurrency) even for this 0.9B model → ~102GB resident, 96% RAM, swapping. 0.20 (~25GB budget) reclaims ~77GB while leaving ample KV headroom. **Do not drop toward 0.10 without verifying startup** — the vision-encoder profiling pass can OOM at that budget, and `KeepAlive` turns that into a ~13-min recompile crash-loop. Verify a clean start by grepping the log for a fresh `GPU KV cache size: … tokens` line.
+- `--max-model-len 16384` / `--max-num-seqs 16` — bound per-request context and scheduler batch (ample for 8-way page batching from the paddleocr container). These do **not** shrink the preallocation; the memory savings come solely from `--gpu-memory-utilization`.
+
+Venv: `~/.venv-vllm-metal`. Inspect true memory with `footprint -p <pid>` (RSS undercounts Metal/`IOAccelerator` unified memory).
 
 **Health endpoint:** `GET /health` → OpenAI-compatible liveness response.
 
