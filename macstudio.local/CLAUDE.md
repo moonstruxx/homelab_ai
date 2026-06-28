@@ -184,7 +184,17 @@ Venv: `~/.venv-vllm-metal`.
 
 ## memory-health-server
 
-Tiny stdlib Python HTTP server (`services/memory-health-server.py`) that exposes macOS swap usage as a health endpoint on **port 9101**. Gatus polls it every 60 s; ntfy alert fires when swap exceeds 2 GB (threshold constant `SWAP_WARN_MB` in the script).
+Stdlib Python HTTP server (`services/memory-health-server.py`) exposing macOS memory pressure on **port 9101**. Gatus polls every 60 s and alerts via ntfy after 3 consecutive failures.
+
+Three signals — any one fires 503/degraded:
+
+| Signal | Threshold | Source |
+|---|---|---|
+| `kern.memorystatus_level` | < 20 | sysctl — same source as Activity Monitor gauge (0-100, 100=no pressure) |
+| Swap % used | > 90 % of swap capacity | `sysctl vm.swapusage` |
+| Swapout rate | > 500 pages/s (~8 MB/s) | rolling delta on `vm_stat` Swapouts between requests |
+
+The swapout rate is `null` on the first request after a restart (no prior snapshot); subsequent calls compute the rate over the elapsed interval.
 
 **Runs as the `com.macaistack.memory-health` LaunchAgent** — auto-restarts (`KeepAlive`), uses `/opt/homebrew/bin/python3`, no extra dependencies.
 
@@ -192,10 +202,10 @@ Tiny stdlib Python HTTP server (`services/memory-health-server.py`) that exposes
 # Manual control
 launchctl kickstart -k gui/$(id -u)/com.macaistack.memory-health   # restart
 tail -f ~/Library/Logs/macaistack-memory-health.log                # logs
-curl http://localhost:9101/health                                    # check — returns {"status":"ok",...}
+curl http://localhost:9101/health | python3 -m json.tool            # check
 ```
 
-Response fields: `status` ("ok" / "degraded" / "unknown"), `swap_total_mb`, `swap_used_mb`, `swap_free_mb`, `issues` (list of human-readable reason strings). Gatus conditions: `[STATUS] == 200` and `[BODY].status == ok`.
+Response fields: `status`, `memorystatus_level`, `swap_total_mb`, `swap_used_mb`, `swap_pct`, `swapout_rate_pages_per_s`, `swapout_total`, `issues`. Gatus conditions: `[STATUS] == 200` and `[BODY].status == ok`.
 
 ## wyoming-whisper-cpp
 
