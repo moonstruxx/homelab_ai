@@ -11,6 +11,7 @@ SERVICES=(
     "com.macaistack.infinity:${SERVICES_DIR}/com.macaistack.infinity.plist"
     "com.macaistack.wyoming:${SERVICES_DIR}/com.macaistack.wyoming.plist"
     "com.macaistack.vllm-paddle:${SERVICES_DIR}/com.macaistack.vllm-paddle.plist"
+    "com.macaistack.memory-health:${SERVICES_DIR}/com.macaistack.memory-health.plist"
 )
 
 start_service() {
@@ -45,6 +46,7 @@ done
 
 echo
 echo "logs:"
-echo "  infinity:  ~/Library/Logs/macaistack-infinity.log"
-echo "  wyoming:   ~/Library/Logs/macaistack-wyoming.log"
-echo "  vllm-paddle: ~/Library/Logs/macaistack-vllm-paddle.log"
+echo "  infinity:       ~/Library/Logs/macaistack-infinity.log"
+echo "  wyoming:        ~/Library/Logs/macaistack-wyoming.log"
+echo "  vllm-paddle:    ~/Library/Logs/macaistack-vllm-paddle.log"
+echo "  memory-health:  ~/Library/Logs/macaistack-memory-health.log"

@@ -53,8 +53,9 @@ echo "================"
 # User LaunchAgents (label  -> friendly name)
 for entry in \
     "com.macaistack.infinity:infinity (embed/rerank)" \
-    "com.macaistack.wyoming:wyoming (whisper STT)"
-    "com.macaistack.vllm-paddle:vllm-paddle (PaddleOCR VLM)"; do
+    "com.macaistack.wyoming:wyoming (whisper STT)" \
+    "com.macaistack.vllm-paddle:vllm-paddle (PaddleOCR VLM)" \
+    "com.macaistack.memory-health:memory-health (swap/mem)"; do
     label="${entry%%:*}"; name="${entry##*:}"
     state=$(launchd_state "${DOMAIN}/${label}")
     mark_for "$state"
@@ -101,6 +102,7 @@ ENDPOINTS=(
     "anemll-server       |127.0.0.1:8000    |manual      |http://127.0.0.1:8000/v1/models"
     "wyoming-whisper-cpp |127.0.0.1:10300   |launchd     |tcp"
     "vllm-paddle         |192.168.1.114:8000|launchd     |http://192.168.1.114:8000/v1/models"
+    "memory-health       |192.168.1.114:9101|launchd     |http://192.168.1.114:9101/health"
 )
 
 for entry in "${ENDPOINTS[@]}"; do
@@ -120,3 +122,4 @@ done
 
 echo
 echo "${DIM}logs: ~/Library/Logs/macaistack-*.log    daemon: /var/log/macaistack-ext-mount.log${RST}"
+echo "${DIM}memory-health endpoint: http://192.168.1.114:9101/health  (swap threshold: 2048 MB)${RST}"

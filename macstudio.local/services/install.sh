@@ -20,7 +20,7 @@ sudo launchctl bootstrap system /Library/LaunchDaemons/com.macaistack.ext-mount.
 echo "Installed: com.macaistack.ext-mount"
 
 # User services (run as bjorn, after login)
-for plist in com.macaistack.infinity.plist com.macaistack.wyoming.plist com.macaistack.vllm-paddle.plist; do
+for plist in com.macaistack.infinity.plist com.macaistack.wyoming.plist com.macaistack.vllm-paddle.plist com.macaistack.memory-health.plist; do
     cp "${SERVICES_DIR}/${plist}" ~/Library/LaunchAgents/
     chmod 644 ~/Library/LaunchAgents/"${plist}"
     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/"${plist}"
@@ -29,9 +29,10 @@ done
 
 echo ""
 echo "All launchd services installed and started."
-echo "Mount log:      /var/log/macaistack-ext-mount.log"
-echo "Infinity log:   ~/Library/Logs/macaistack-infinity.log"
-echo "Wyoming log:    ~/Library/Logs/macaistack-wyoming.log"
+echo "Mount log:         /var/log/macaistack-ext-mount.log"
+echo "Infinity log:      ~/Library/Logs/macaistack-infinity.log"
+echo "Wyoming log:       ~/Library/Logs/macaistack-wyoming.log"
+echo "Memory-health log: ~/Library/Logs/macaistack-memory-health.log"
 echo ""
 echo "NOTE: apple-on-device-openai is managed as a macOS Login Item, not a launchd service."
 echo "  1. Build in Xcode: open apple-on-device-openai/AppleOnDeviceOpenAI.xcodeproj"

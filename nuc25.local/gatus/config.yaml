@@ -214,3 +214,16 @@ endpoints:
       - "[STATUS] == 200"
     alerts:
       - type: ntfy
+
+  # ── macstudio: System Health ──────────────────────────────────────────────
+
+  - name: macstudio Memory Pressure
+    group: "macstudio — System Health"
+    url: "http://${MACSTUDIO_IP}:9101/health"
+    description: "macOS swap / memory-pressure sentinel | host: ${MACSTUDIO_IP}:9101 | launchd: com.macaistack.memory-health | logs: ~/Library/Logs/macaistack-memory-health.log | alerts when swap used > 2 GB"
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY].status == ok"
+    alerts:
+      - type: ntfy

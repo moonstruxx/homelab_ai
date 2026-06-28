@@ -21,6 +21,12 @@ This is a monorepo of git submodules, each providing a different AI inference se
 | `mlx-vlm` | MLX | — | MLX vision-language model library (used as vllm-metal dependency for PaddleOCR-VL) |
 | `wyoming-whisper-cpp` | whisper.cpp | 10300 (Wyoming) | Speech-to-text bridge for Home Assistant voice pipelines |
 
+Non-submodule services (in `services/`):
+
+| Service | Port | Description |
+|---|---|---|
+| `memory-health-server.py` | 9101 | Swap/memory-pressure sentinel; Gatus-polled health endpoint |
+
 
 ## Service Management
 
@@ -175,6 +181,21 @@ curl http://localhost:8000/health                                  # check statu
 Venv: `~/.venv-vllm-metal`.
 
 **Health endpoint:** `GET /health` → OpenAI-compatible liveness response.
+
+## memory-health-server
+
+Tiny stdlib Python HTTP server (`services/memory-health-server.py`) that exposes macOS swap usage as a health endpoint on **port 9101**. Gatus polls it every 60 s; ntfy alert fires when swap exceeds 2 GB (threshold constant `SWAP_WARN_MB` in the script).
+
+**Runs as the `com.macaistack.memory-health` LaunchAgent** — auto-restarts (`KeepAlive`), uses `/opt/homebrew/bin/python3`, no extra dependencies.
+
+```bash
+# Manual control
+launchctl kickstart -k gui/$(id -u)/com.macaistack.memory-health   # restart
+tail -f ~/Library/Logs/macaistack-memory-health.log                # logs
+curl http://localhost:9101/health                                    # check — returns {"status":"ok",...}
+```
+
+Response fields: `status` ("ok" / "degraded" / "unknown"), `swap_total_mb`, `swap_used_mb`, `swap_free_mb`, `issues` (list of human-readable reason strings). Gatus conditions: `[STATUS] == 200` and `[BODY].status == ok`.
 
 ## wyoming-whisper-cpp
 
