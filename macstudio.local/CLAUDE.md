@@ -167,10 +167,12 @@ curl http://localhost:8000/health                                  # check statu
 
 **Run script:** `services/run-vllm-paddle.sh` — invokes `vllm serve` with:
 - `--mm-processor-kwargs '{"max_pixels": 1503680}'` — caps vision-encoder input (limits prefill to ~2s for A4 pages at 150dpi).
-- `--gpu-memory-utilization 0.20` — **the only flag that bounds memory.** vLLM's default (0.9) preallocates a KV cache to fill ~90% of the 128GB unified memory (~5.5M tokens, 41x concurrency) even for this 0.9B model → ~102GB resident, 96% RAM, swapping. 0.20 (~25GB budget) reclaims ~77GB while leaving ample KV headroom. **Do not drop toward 0.10 without verifying startup** — the vision-encoder profiling pass can OOM at that budget, and `KeepAlive` turns that into a ~13-min recompile crash-loop. Verify a clean start by grepping the log for a fresh `GPU KV cache size: … tokens` line.
-- `--max-model-len 16384` / `--max-num-seqs 16` — bound per-request context and scheduler batch (ample for 8-way page batching from the paddleocr container). These do **not** shrink the preallocation; the memory savings come solely from `--gpu-memory-utilization`.
+- **`VLLM_METAL_MEMORY_FRACTION=0.20`** (env var, exported in the run script) — **the only lever that bounds memory on this backend.** The vllm-metal/MLX **paged-attention** path sizes the KV pool as `metal_limit * VLLM_METAL_MEMORY_FRACTION` (default `auto`=0.90); the upstream `--gpu-memory-utilization` flag is **ignored** here. At 0.90 the pool is ~101GB / 5.49M tokens for a 0.9B model that uses ~0% of it → ~102GB resident, 96% RAM, swapping. 0.20 → ~20GB KV budget (~1.1M tokens, ~67x concurrency at 16K ctx), process footprint ~25GB — reclaims ~73GB. No OOM risk (model+overhead measured ~2.8GB; activations are bounded by the Metal `wired_limit`, not this fraction). Valid range `0 < f <= 1`.
+- `--max-model-len 16384` / `--max-num-seqs 16` — bound per-request context and scheduler batch; they only **re-slice** the same KV pool (concurrency 41.9x→335x at the *same* token count), they do **not** shrink it.
 
-Venv: `~/.venv-vllm-metal`. Inspect true memory with `footprint -p <pid>` (RSS undercounts Metal/`IOAccelerator` unified memory).
+**Verify after restart:** grep the log for the `cache_policy.py … memory breakdown: … fraction=0.2 … kv_budget=… GB` line and run `footprint -p <EngineCore pid>` (`pgrep -f VLLM::EngineCore`) — `phys_footprint` should be ~25GB, not ~100GB. RSS undercounts Metal/`IOAccelerator` unified memory, so use `footprint`, not `ps`.
+
+Venv: `~/.venv-vllm-metal`.
 
 **Health endpoint:** `GET /health` → OpenAI-compatible liveness response.
 
