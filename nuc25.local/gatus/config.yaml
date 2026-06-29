@@ -45,14 +45,13 @@ endpoints:
     alerts:
       - type: ntfy
 
-  - name: Elasticsearch
+  - name: Infinity (vector DB)
     group: "nuc25 — RAG Core"
-    url: "http://elastic:OqoCT3e6tWShB2aKlqt0S0lP69yioXYY@elasticsearch:9200/_cluster/health"
-    description: "Elasticsearch cluster health | docker network: elasticsearch:9200 | requires auth"
+    url: "http://infinity:23820/admin/node/current"
+    description: "Infinity vector database | docker network: infinity:23820 | HTTP admin API"
     interval: 30s
     conditions:
       - "[STATUS] == 200"
-      - "[BODY].status != red"
     alerts:
       - type: ntfy
 
@@ -220,7 +219,7 @@ endpoints:
   - name: macstudio Memory Pressure
     group: "macstudio — System Health"
     url: "http://${MACSTUDIO_IP}:9101/health"
-    description: "macOS swap / memory-pressure sentinel | host: ${MACSTUDIO_IP}:9101 | launchd: com.macaistack.memory-health | logs: ~/Library/Logs/macaistack-memory-health.log | alerts when swap used > 2 GB"
+    description: "macOS swap / memory-pressure sentinel | host: ${MACSTUDIO_IP}:9101 | launchd: com.macaistack.memory-health | logs: ~/Library/Logs/macaistack-memory-health.log | three signals, any fires 503/degraded: memorystatus_level < 20, swap > 90% of capacity, or swapout rate > 500 pages/s"
     interval: 60s
     conditions:
       - "[STATUS] == 200"

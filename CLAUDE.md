@@ -7,7 +7,7 @@ This is the **homelab_ai** monorepo. It unifies all infrastructure code for the 
 ```
 homelab_ai/
 ├── CLAUDE.md                   ← you are here — fleet-wide rules
-├── nuc25.local/                ← Docker Compose stack (RAGFlow, ES, Langfuse, web tools, monitoring)
+├── nuc25.local/                ← Docker Compose stack (RAGFlow, Infinity vector DB, Langfuse, web tools, monitoring)
 │   └── CLAUDE.md               ← host-specific operations for nuc25
 └── macstudio.local/            ← macOS launchd services (inference, embeddings, speech-to-text)
     └── CLAUDE.md               ← host-specific operations for macstudio

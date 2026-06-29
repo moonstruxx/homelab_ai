@@ -52,13 +52,13 @@ docker compose -f $COMPOSE_FILE build rag-mcp && \
 
 Services run across three Docker bridge networks:
 - **`ragflow`** — application-tier services (searxng, spider-local, rag-mcp, paddleocr, tailscale, ntfy, wud, gatus, ragflow, langfuse-web, langfuse-worker)
-- **`rag-data`** — data stores only (mysql, minio, redis, elasticsearch, all four Langfuse backends). Isolated from app-tier services — SearXNG and spider-local cannot reach data stores by container name. Services that need data access (ragflow, langfuse-web, langfuse-worker, gatus) join both networks.
+- **`rag-data`** — data stores only (mysql, minio, redis, infinity, all four Langfuse backends). Isolated from app-tier services — SearXNG and spider-local cannot reach data stores by container name. Services that need data access (ragflow, langfuse-web, langfuse-worker, gatus) join both networks.
 - **`rag-ingress`** (external, pre-created) — thin cross-stack bridge. Only `gatus` joins it from this stack, to health-check Nextcloud and Paperless via the `aio-ingress` alias on the AIO tailscale container. Created once: `docker network create rag-ingress`.
 
 **Host-port exposure policy:**
 - **LAN-accessible (0.0.0.0):** RAGFlow web UI (80/443), RAGFlow API (9380), MCP server (9382), Langfuse UI (3000), MinIO console (9001), SearXNG (8088), WUD (3002), ntfy (5555), Gatus (8090)
 - **Loopback only (127.0.0.1):** RAGFlow admin/go ports (9381/9383/9384), PaddleOCR (8010), spider-local (11235), rag-mcp (11236), langfuse-minio (9090)
-- **No host publish** (intra-stack via `rag-data` only): mysql, redis, elasticsearch, minio S3 API (port 9000; console 9001 is LAN-accessible)
+- **No host publish** (intra-stack via `rag-data` only): mysql, redis, infinity, minio S3 API (port 9000; console 9001 is LAN-accessible)
 
 Three functional groups of services:
 
@@ -66,7 +66,7 @@ Three functional groups of services:
 - `mysql` — primary relational DB for metadata/application state (data: `/srv/stack/mysql`)
 - `minio` — object storage for documents and chunks (data: `/srv/stack/minio`)
 - `redis` (Valkey 8) — cache and message queue (data: `/srv/stack/redis`)
-- `elasticsearch` — vector and full-text search (data: `/srv/stack/elasticsearch`); **performance-optimized**: memory-locked heap (2GB), relaxed disk watermarks (10/8/5GB)
+- `infinity` — vector and full-text search (`infiniflow/infinity:v0.7.0`, data: `/srv/stack/infinity`); Thrift port 23817, HTTP port 23820, Postgres port 5432; config in `infinity_conf.toml`; `DOC_ENGINE=infinity` in `.env` selects it
 - `ragflow` — main application: serves UI (port 80/443), Python API (9380), Admin API (9381), MCP server (9382)
 
 ### OCR (always on)
@@ -93,7 +93,7 @@ Three functional groups of services:
 
 ### Health Monitoring (always on)
 - `ntfy` — self-hosted push notification server; port `${NTFY_PORT:-5555}`; data in named volume `ntfy_data`. Topics: `rag-stack` (Gatus health alerts), `rag-stack-updates` (WUD image update alerts). Subscribe via ntfy app at `https://{TS_HOSTNAME}.{TS_TAILNET}:5555`.
-- `gatus` — config-as-code health monitor; status page at port `${GATUS_PORT:-8090}`; config in `gatus/config.yaml`. Monitors 17 endpoints across nuc25 (RAG core, web tools, Langfuse, Nextcloud, Paperless) and macstudio (apple-on-device-openai, Infinity, vllm-metal, Wyoming Whisper, memory-pressure). Alerts to ntfy after 3 consecutive failures; notifies on recovery. Elasticsearch auth uses URL-embedded credentials (`http://elastic:<password>@elasticsearch:9200/...`) to bypass Gatus header parsing issues. Nextcloud and Paperless checks go via `rag-ingress` → `aio-ingress` (the AIO Caddy alias); see `gatus/config.yaml` for the Host-header routing. Wyoming Whisper uses a TCP connection check (Wyoming protocol on port 10300).
+- `gatus` — config-as-code health monitor; status page at port `${GATUS_PORT:-8090}`; config in `gatus/config.yaml`. Monitors 18 endpoints across nuc25 (RAG core, web tools, Langfuse, Nextcloud, Paperless) and macstudio (apple-on-device-openai, Infinity embedding/rerank, vllm-metal, Wyoming Whisper, memory-pressure). Alerts to ntfy after 3 consecutive failures; notifies on recovery. Infinity vector DB check uses `http://infinity:23820/admin/node/current`. Nextcloud and Paperless checks go via `rag-ingress` → `aio-ingress` (the AIO Caddy alias); see `gatus/config.yaml` for the Host-header routing. Wyoming Whisper uses a TCP connection check (Wyoming protocol on port 10300).
 - `wud` — What's Up Docker; dashboard at port 3002; notify-only (no auto-updates). WUD labels per service control which tags trigger notifications (see three-tier strategy below). Image update alerts forwarded to ntfy topic `rag-stack-updates`.
 
 ### Tailscale VPN Access (profile: `tailscale`)
@@ -195,19 +195,11 @@ curl -X POST "http://localhost/v1/datasets/{DATASET_ID}/documents" \
 
 RAGFlow API reference: `http://localhost/redoc`
 
-## Elasticsearch Field Limit Maintenance
+## Vector DB: Infinity
 
-The `ragflow*` ES indices have a dynamic mapping field limit. Raised to 5000 on 2026-06-24 via live API call (no restart needed). Will need periodic bumping as the knowledge base grows. If `Limit of total fields [1000] has been exceeded` appears in ragflow logs:
+`DOC_ENGINE=infinity` in `.env` selects Infinity as the vector backend. Config in `infinity_conf.toml` (version must match image tag, currently `v0.7.0`). Data persisted in `srv/stack/infinity/`.
 
-```bash
-ELASTIC_PASSWORD=$(grep 'ELASTIC_PASSWORD=' .env | cut -d= -f2)
-docker exec rag_ai_stack-elasticsearch-1 curl -s -u "elastic:${ELASTIC_PASSWORD}" \
-  -X PUT 'http://localhost:9200/ragflow*/_settings' \
-  -H 'Content-Type: application/json' \
-  -d '{"index": {"mapping": {"total_fields": {"limit": 5000}}}}'
-```
-
-This is a live setting — survives ES restart but does **not** apply to new indices created in the future.
+To revert to Elasticsearch: set `DOC_ENGINE=elasticsearch` in `.env`, swap infinity for elasticsearch in the compose file, and add an Elasticsearch endpoint to Gatus. The old ES data in `srv/stack/elasticsearch/` was not deleted and can be reused. All previously indexed knowledge base documents must be re-parsed when switching backends — there is no cross-engine vector migration.
 
 ## RAGFlow Task Executor: Stranded Redis Stream Tasks
 
