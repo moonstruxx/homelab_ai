@@ -24,7 +24,9 @@ This stack spans two machines:
 
 Services on both hosts share the same logical stack; RAGFlow on nuc25.local connects to macstudio.local for model inference and embeddings.
 
-**Sister stack on macstudio:** The macstudio services live in `~/git/homelab_ai/macstudio.local/` (same monorepo, locally accessible). To run commands on macstudio, SSH: `ssh macstudio` (configured in `~/.ssh/config` with `id_hetzner`). The **vllm serve** (`com.macaistack.vllm-paddle` launchd agent) serves PaddleOCR-VL on port 8000 via vllm-metal; model alias `PaddleOCR-VL-0.9B`. When this service is down, the `paddleocr` container on nuc25 returns HTTP 503 on `/health` (and Gatus alerts). Restart: `ssh macstudio launchctl kickstart -k gui/$(ssh macstudio id -u)/com.macaistack.vllm-paddle`.
+**Sister stack on macstudio:** The macstudio services live in `~/git/homelab_ai/macstudio.local/` (same monorepo, locally accessible). To run commands on macstudio, SSH: `ssh macstudio` (configured in `~/.ssh/config` with `id_hetzner`).
+
+**tp42.local** is a separate host (192.168.1.169) running the native PaddleOCR layout-parsing service on port 8080 (`POST /layout-parsing`, `GET /health`). The `paddleocr` proxy container forwards to it. When tp42.local:8080 is unreachable, the proxy returns HTTP 503 on `/health` (and Gatus alerts).
 
 ## Common Operations
 
@@ -70,13 +72,12 @@ Three functional groups of services:
 - `ragflow` — main application: serves UI (port 80/443), Python API (9380), Admin API (9381), MCP server (9382)
 
 ### OCR (always on)
-- `paddleocr` — PaddleOCR-VL proxy; port `${PADDLEOCR_PORT:-8010}`; built from `paddleocr/`. Implements the **async job protocol** that RAGFlow's running container calls (`deepdoc/parser/paddleocr_parser.py` in the Docker image, which differs from the submodule):
-  - `GET /health` — checks macstudio VLM backend is reachable; returns 503 if macstudio is down
-  - `POST /api/v2/ocr/jobs` — multipart form (`file`, `model`, `optionalPayload`); starts background VLM OCR; returns `{"errorCode": 0, "data": {"jobId": "..."}}`.
-  - `GET /api/v2/ocr/jobs/{job_id}` — poll; returns `{"errorCode": 0, "data": {"state": "processing|done|failed", "resultJsonUrl": "..."}}`.
-  - `GET /api/v2/ocr/jobs/{job_id}/result` — JSONL result; returns `{"result": {"layoutParsingResults": [...]}}`.
-  Inference offloaded to mlx-vlm server on `macstudio.local:8000` (model ID: `PaddleOCR-VL-0.9B`, set via `PADDLEOCR_VLLM_MODEL` in `.env`). **RAGFlow UI config**: Base URL = `http://paddleocr:8000`, Algorithm = `PaddleOCR-VL` (must be exactly this string — `PaddleOCR-VL-1.6` or similar will fail validation).
-  **Page-level parallelism:** within a single PDF job, pages are OCR'd concurrently (bounded `asyncio.gather`) so the vLLM backend can batch them — `Running: N reqs` in the vLLM log rises above 1 during a multi-page job. Concurrency defaults to 8, tunable via `PADDLEOCR_PAGE_CONCURRENCY` — forwarded to the container in the `paddleocr` service `environment:` block, so set it in `.env` and recreate the container (`docker compose ... up -d paddleocr`) to change it. A failing page yields a `[OCR failed]` placeholder block rather than failing the whole job. Cross-document concurrency is separately gated by RAGFlow's task-executor count (one OCR job per file); if heavy multi-doc load ever saturates the vLLM KV pool you'll see `Waiting: N reqs` in the vLLM log (benign queuing — raise `VLLM_METAL_MEMORY_FRACTION` on macstudio if sustained).
+- `paddleocr` — async job protocol proxy; host port `${PADDLEOCR_PORT:-8010}` → container port 8000; built from `paddleocr/`. Implements the **async job protocol** that the running RAGFlow Docker image calls, bridging to tp42's synchronous `/layout-parsing` API (env: `PADDLEOCR_BACKEND_URL=http://tp42.local:8080`). Extra-hosts entry in compose pins `tp42.local` → `${TP42_IP:-192.168.1.169}` so Docker DNS resolves it.
+  - `GET /health` — probes `tp42.local:8080/health`; returns 503 if unreachable
+  - `POST /api/v2/ocr/jobs` — multipart form (`file`, `model`, `optionalPayload`); fires background job calling tp42's `/layout-parsing` with the file as base64; returns `{"errorCode": 0, "data": {"jobId": "..."}}`
+  - `GET /api/v2/ocr/jobs/{job_id}` — returns `{"state": "processing|done|failed", "resultJsonUrl": "http://paddleocr:8000/api/v2/ocr/jobs/{job_id}/result"}`
+  - `GET /api/v2/ocr/jobs/{job_id}/result` — JSONL; each line: `{"result": {"layoutParsingResults": [...]}}`
+  **RAGFlow UI config**: Settings → Model Providers → PaddleOCR: Base URL = `http://paddleocr:8000`, Algorithm = `PaddleOCR-VL` (exact string — `PaddleOCR-VL-1.6` or similar will fail RAGFlow's internal validation). Model name = `PaddleOCR-VL-1.6`. The `paddleocr_api_url` in `tenant_model_instance.api_key` must be the bare base URL (`http://paddleocr:8000`), not a path — RAGFlow appends `/api/v2/ocr/jobs` itself. **Warning**: the running Docker image's `paddleocr_parser.py` differs from the ragflow submodule; it uses the async job protocol, not a direct POST. Always implement the async protocol in the proxy.
 
 ### Web Scraping (profile: `webscrape`)
 - `searxng` — metasearch engine, config in `searxng/settings.yml`, host port 8088 → container 8080 (JSON API enabled)
@@ -90,6 +91,12 @@ Three functional groups of services:
 - `langfuse-redis` — worker queue (data: `/srv/stack/langfuse/redis`)
 - `langfuse-worker` — background processor, port 3030
 - `langfuse-web` — observability UI, port 3000
+
+**Langfuse tracing (SDK v4)**: `paddleocr` and `rag-mcp` send traces to `http://langfuse-web:3000`. SDK reads `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` from environment (set in compose via `.env` + per-service `LANGFUSE_HOST: http://langfuse-web:3000`).
+- `paddleocr/main.py` — one trace per OCR job using `_lf.start_as_current_observation()` with nested span for the tp42 backend call; uses Langfuse v4 OTel-based API (`get_client()`)
+- `web-tools-mcp/server.py` — `@observe(as_type="tool")` decorator on `web_search` and `crawl`; explicit input/output via `get_client().update_current_span()`
+
+To update the Langfuse project keys: edit `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` in `.env`, then `docker compose up -d paddleocr rag-mcp` (no rebuild needed).
 
 ### Health Monitoring (always on)
 - `ntfy` — self-hosted push notification server; port `${NTFY_PORT:-5555}`; data in named volume `ntfy_data`. Topics: `rag-stack` (Gatus health alerts), `rag-stack-updates` (WUD image update alerts). Subscribe via ntfy app at `https://{TS_HOSTNAME}.{TS_TAILNET}:5555`.

@@ -184,13 +184,14 @@ endpoints:
     alerts:
       - type: ntfy
 
-  - name: vllm-metal (PaddleOCR backend)
+  - name: tp42 PaddleOCR backend
     group: "macstudio — ML Services"
-    url: "http://${MACSTUDIO_IP}:8000/health"
-    description: "mlx-vlm server for PaddleOCR-VL inference | host: ${MACSTUDIO_IP}:8000 | launchd: com.macaistack.vllm-paddle | logs: ~/Library/Logs/macaistack-vllm-paddle.log"
+    url: "http://192.168.1.169:8080/health"
+    description: "Native PaddleOCR layout-parsing service on tp42.local | POST /layout-parsing | proxied via paddleocr container on nuc25"
     interval: 60s
     conditions:
       - "[STATUS] == 200"
+      - "[BODY].errorCode == 0"
     alerts:
       - type: ntfy
 
