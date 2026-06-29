@@ -156,6 +156,15 @@ services:
       # Patch: fix Langfuse "view" button hardcoded to cloud.langfuse.com — uses configured host instead.
       # Must be re-applied when RAGFLOW_IMAGE changes (chunk filename is content-addressed).
       - ./patches/web/index-CJBrrOXS.js:/ragflow/web/dist/chunk/js/index-CJBrrOXS.js:ro
+      # Patch: pass PADDLEOCR_REQUEST_TIMEOUT through to PaddleOCRParser (upstream hardcodes 600s).
+      - ./patches/ocr_model.py:/ragflow/rag/llm/ocr_model.py:ro
+      # Patch: fix KeyError 'page_number' in remove_toc_pdf when parse_method=paddleocr.
+      # PaddleOCR bboxes use 'positions' not 'page_number'; guard with .get() to avoid crash.
+      - ./patches/utils.py:/ragflow/rag/flow/parser/utils.py:ro
+      - ./scripts/reclaim-tasks-on-startup.py:/ragflow/reclaim-tasks-on-startup.py:ro
+    post_start:
+      - command: ["python3", "/ragflow/reclaim-tasks-on-startup.py"]
+        user: root
     labels:
       wud.watch: 'true'
       wud.display.name: RAGFlow
@@ -166,7 +175,7 @@ services:
     <<: *defaults
     build: ./paddleocr
     environment:
-      OPENAI_API_BASE: ${PADDLEOCR_VLLM_ENDPOINT:-http://macstudio.local:8000/v1}
+      OPENAI_API_BASE: ${PADDLEOCR_VLLM_ENDPOINT:-http://tp42.local:8000/v1}
       OPENAI_API_KEY: ${PADDLEOCR_VLLM_API_KEY:-dummy}
       OPENAI_API_MODEL: ${PADDLEOCR_VLLM_MODEL:-PaddlePaddle/PaddleOCR-VL}
       PADDLEOCR_PAGE_CONCURRENCY: ${PADDLEOCR_PAGE_CONCURRENCY:-8}
@@ -589,10 +598,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
-      interval: 10s
-      timeout: 10s
-      retries: 60
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      disable: true
     labels:
       wud.watch: 'true'
       wud.display.name: Gatus

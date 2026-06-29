@@ -14,7 +14,7 @@ This is a monorepo of git submodules, each providing a different AI inference se
 
 | Submodule | Backend | Port | Description |
 |---|---|---|---|
-| `apple-on-device-openai` | Apple FoundationModels | 8080 | macOS GUI app; serves Apple Intelligence via OpenAI API |
+| `apple-on-device-openai` | Apple FoundationModels | 11537 | macOS GUI app; serves Apple Intelligence via OpenAI API |
 | `anemll-server` | Apple Neural Engine (CoreML) | 8000 | FastAPI server for ANE-optimized `.mlmodelc` models |
 | `infinity` | torch/MPS | 7997 | Embedding (`BAAI/bge-m3`) + rerank (`BAAI/bge-reranker-v2-m3`) |
 | `vllm-metal` | vLLM + MLX | configurable | vLLM plugin for Apple Silicon; MLX as primary compute backend |

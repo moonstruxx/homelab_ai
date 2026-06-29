@@ -15,7 +15,7 @@ ui:
     - name: Paperless
       link: https://cloud.taildec1bd.ts.net:8010
     - name: apple-on-device-openai
-      link: http://${MACSTUDIO_IP}:8080
+      link: http://${MACSTUDIO_IP}:11537
     - name: WUD
       link: http://nuc25.local:3002
     - name: ntfy
@@ -176,12 +176,12 @@ endpoints:
 
   - name: apple-on-device-openai
     group: "macstudio — ML Services"
-    url: "http://${MACSTUDIO_IP}:8080/health"
-    description: "Apple Intelligence (FoundationModels) OpenAI-compatible API | host: ${MACSTUDIO_IP}:8080 | submodule: apple-on-device-openai"
+    url: "http://${MACSTUDIO_IP}:11537/v1/models"
+    description: "Apple Intelligence (FoundationModels) OpenAI-compatible API | host: ${MACSTUDIO_IP}:11537 | submodule: apple-on-device-openai"
     interval: 60s
     conditions:
       - "[STATUS] == 200"
-      - "[BODY].status == ok"
+      - "[BODY].object == list"
     alerts:
       - type: ntfy
 

@@ -20,7 +20,7 @@ This stack spans two machines:
 | Host | Role |
 |------|------|
 | `nuc25.local` | RAGFlow core, observability (Langfuse), web scraping, health monitoring (Gatus) — **this directory** (`~/git/homelab_ai/nuc25.local`) |
-| `macstudio.local` | GPU/ANE services — **`~/git/homelab_ai/macstudio.local`** (same monorepo): Infinity (embedding/rerank), apple-on-device-openai (Apple Intelligence via FoundationModels, port 8080), mlx-vlm server (PaddleOCR inference on port 8000 via `com.macaistack.vllm-paddle` launchd), anemll-server (ANE/CoreML, port 8000), Wyoming Whisper (speech-to-text on port 10300) |
+| `macstudio.local` | GPU/ANE services — **`~/git/homelab_ai/macstudio.local`** (same monorepo): Infinity (embedding/rerank), apple-on-device-openai (Apple Intelligence via FoundationModels, port 11537), mlx-vlm server (PaddleOCR inference on port 8000 via `com.macaistack.vllm-paddle` launchd), anemll-server (ANE/CoreML, port 8000), Wyoming Whisper (speech-to-text on port 10300) |
 
 Services on both hosts share the same logical stack; RAGFlow on nuc25.local connects to macstudio.local for model inference and embeddings.
 
@@ -208,6 +208,21 @@ docker exec rag_ai_stack-elasticsearch-1 curl -s -u "elastic:${ELASTIC_PASSWORD}
 ```
 
 This is a live setting — survives ES restart but does **not** apply to new indices created in the future.
+
+## RAGFlow Task Executor: Stranded Redis Stream Tasks
+
+**Root cause**: Each ragflow restart creates a new task executor with a new consumer ID in the Redis Stream (`te.0.common`, group `rag_flow_svr_task_broker`). The previous executor's in-flight tasks stay in its dead consumer's PEL (pending entry list) and are never automatically redelivered. After many restarts, hundreds of tasks accumulate as stranded.
+
+**Symptom**: After a restart, 1–3 tasks process quickly, then the executor goes silent for 20–30 min (GraphRAG/RAPTOR phase). Meanwhile 100+ tasks never get picked up. `XINFO GROUPS te.0.common` shows a large `pending` count and many dead consumers.
+
+**Automatic fix**: A `post_start` lifecycle hook on the ragflow service (added 2026-06-29) runs `scripts/reclaim-tasks-on-startup.py` after each restart. It waits 20s for the executor to start, finds the new live consumer (smallest idle time), then `XAUTOCLAIM`s all stale tasks (idle > 35 min) to it.
+
+**Manual fix**: Run from `~/git/homelab_ai/nuc25.local`:
+```bash
+./scripts/reclaim-ragflow-tasks.sh
+```
+
+**LLM connection for GraphRAG/RAPTOR**: RAGFlow's default LLM (`apple-on-device@swift-ane`) connects to `http://macstudio.local:11537/v1`. If that service is down, GraphRAG and RAPTOR phases silently retry/timeout for up to 30 min per document (configured in KB parser config). Gatus monitors this endpoint. If tasks are stuck with no log output for > 5 min, check Gatus for the apple-on-device status.
 
 ## Known Active Issues
 

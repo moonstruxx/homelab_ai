@@ -24,7 +24,7 @@ client = AsyncOpenAI(
     api_key=VLLM_API_KEY,
     http_client=httpx.AsyncClient(
         transport=httpx.AsyncHTTPTransport(retries=1),
-        timeout=httpx.Timeout(120.0),
+        timeout=httpx.Timeout(600.0),  # 10 minutes for large documents
     ),
 )
 
