@@ -239,8 +239,7 @@ services:
       - 127.0.0.1:${MCP_TOOLS_PORT:-11236}:8000
     healthcheck:
       <<: *health_defaults
-      # /mcp answers without a session with HTTP 4xx -> any HTTP response means "up"
-      test: ["CMD", "python", "-c", "import urllib.request,urllib.error\ntry:\n urllib.request.urlopen('http://localhost:8000/mcp')\nexcept urllib.error.HTTPError:\n pass"]
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
     labels:
       wud.watch: 'false'
 
