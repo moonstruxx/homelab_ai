@@ -125,6 +125,7 @@ services:
       - --enable-mcpserver
       - --mcp-host=0.0.0.0
       - --mcp-host-api-key=${RAGFLOW_MCP_API_KEY}
+      - --workers=2
     ports:
       - ${SVR_WEB_HTTP_PORT:-8080}:80
       - ${SVR_WEB_HTTPS_PORT:-8443}:443
@@ -144,11 +145,16 @@ services:
       # Patch: fix Langfuse "view" button hardcoded to cloud.langfuse.com — uses configured host instead.
       # Must be re-applied when RAGFLOW_IMAGE changes (chunk filename is content-addressed).
       - ./patches/web/index-CJBrrOXS.js:/ragflow/web/dist/chunk/js/index-CJBrrOXS.js:ro
-      # Patch: pass PADDLEOCR_REQUEST_TIMEOUT through to PaddleOCRParser (upstream hardcodes 600s).
-      - ./patches/ocr_model.py:/ragflow/rag/llm/ocr_model.py:ro
       # Patch: fix KeyError 'page_number' in remove_toc_pdf when parse_method=paddleocr.
       # PaddleOCR bboxes use 'positions' not 'page_number'; guard with .get() to avoid crash.
       - ./patches/utils.py:/ragflow/rag/flow/parser/utils.py:ro
+      # Patch: per-page error handling in __images__ — upstream list comprehension aborts
+      # entirely if any single page fails to render. We catch per-page exceptions instead.
+      - ./patches/paddleocr_parser.py:/ragflow/deepdoc/parser/paddleocr_parser.py:ro
+      # Patch: MinerU OCR model — routes document parsing to mineru-api server instead of PaddleOCR.
+      - ./patches/ocr_model.py:/ragflow/deepdoc/parser/ocr_model.py:ro
+      # Patch: MinerU async API — synchronous /file_parse times out on long docs; use /tasks + polling.
+      - ./patches/mineru_parser.py:/ragflow/deepdoc/parser/mineru_parser.py:ro
       - ./scripts/reclaim-tasks-on-startup.py:/ragflow/reclaim-tasks-on-startup.py:ro
     post_start:
       - command: ["python3", "/ragflow/reclaim-tasks-on-startup.py"]

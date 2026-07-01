@@ -2,11 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Sessions run **locally on nuc25.local**. The working directory is `/home/bjoern/git/homelab_ai/nuc25.local`. Commands execute directly — no SSH needed. Data is persisted under `srv/stack/` (gitignored, in this directory).
+Sessions run **locally on tp42.local** (192.168.1.169). The working directory is `/home/bjoern/git/homelab_ai/nuc25.local` (the repo clone on tp42). **All docker/podman compose commands must run on nuc25.local via SSH.** Data (`.env`, `srv/`, etc.) is on nuc25, not in this repo directory.
 
 ## Standing Rules
 
-1. **Documentation after every task**: After completing any task that adds, changes, or removes a service, endpoint, configuration, or operational procedure — update this CLAUDE.md and, if relevant, the fleet root (`~/git/homelab_ai/CLAUDE.md`) and macstudio CLAUDE.md (`~/git/homelab_ai/macstudio.local/CLAUDE.md`, accessible locally — no SSH needed for file edits). See fleet-wide standing rules in `~/git/homelab_ai/CLAUDE.md`.
+1. **Documentation after every task**: After completing any task that adds, changes, or removes a service, endpoint, configuration, or operational procedure — update this CLAUDE.md and, if relevant, the fleet root (`~/git/homelab_ai/CLAUDE.md`) and macstudio CLAUDE.md (`~/git/homelab_ai/macstudio.local/CLAUDE.md`, accessible locally on tp42 — no SSH needed for file edits). See fleet-wide standing rules in `~/git/homelab_ai/CLAUDE.md`.
 
 2. **Gatus health check for every new service**: Every new service added to the stack MUST get a Gatus health check in `gatus/config.yaml`. The check must use a meaningful endpoint (not just `/` or a root that always returns 200). Verification procedure:
    - Confirm Gatus shows ❌ when the service is down (kill-test or start before the service is up)
@@ -19,7 +19,8 @@ This stack spans two machines:
 
 | Host | Role |
 |------|------|
-| `nuc25.local` | RAGFlow core, observability (Langfuse), web scraping, health monitoring (Gatus) — **this directory** (`~/git/homelab_ai/nuc25.local`) |
+| `tp42.local` | **Local machine** — this repo clone (`~/git/homelab_ai/nuc25.local/`) |
+| `nuc25.local` | RAGFlow core, observability (Langfuse), web scraping, health monitoring (Gatus) — **remote Docker host** |
 | `macstudio.local` | GPU/ANE services — **`~/git/homelab_ai/macstudio.local`** (same monorepo): Infinity (embedding/rerank), apple-on-device-openai (Apple Intelligence via FoundationModels, port 11537), mlx-vlm server (PaddleOCR inference on port 8000 via `com.macaistack.vllm-paddle` launchd), anemll-server (ANE/CoreML, port 8000), Wyoming Whisper (speech-to-text on port 10300) |
 
 Services on both hosts share the same logical stack; RAGFlow on nuc25.local connects to macstudio.local for model inference and embeddings.
@@ -31,7 +32,8 @@ Services on both hosts share the same logical stack; RAGFlow on nuc25.local conn
 ## Common Operations
 
 ```bash
-# All commands run from ~/git/homelab_ai/nuc25.local
+# All commands run on nuc25.local via SSH (this repo clone is local on tp42):
+# ssh nuc25.local "cd ~/git/homelab_ai/nuc25.local && docker compose ..."
 COMPOSE_FILE=common-docker-compose.nuc25-es-web.yml
 
 docker compose -f $COMPOSE_FILE up -d                                   # start all services
@@ -202,9 +204,26 @@ curl -X POST "http://localhost/v1/datasets/{DATASET_ID}/documents" \
 
 RAGFlow API reference: `http://localhost/redoc`
 
-## Vector DB: Infinity
+## Bulk File Upload to Filestore
+
+`scripts/upload_to_filestore.sh` uploads local files matching a glob pattern into RAGFlow's hierarchical filestore, creating folders on demand:
+
+```bash
+RAGFLOW_API_KEY=ragflow-xxxx \
+  ./scripts/upload_to_filestore.sh './data/**/*.pdf' '/my-uploads/docs'
+```
+
+- First positional arg: glob pattern (supports `**` via `globstar`)
+- Second positional arg: destination folder path in the filestore (optional, omit for root)
+- Folders are created segment-by-segment if they don't exist
+- Env: `RAGFLOW_API_BASE` (default `http://localhost/api/v1`)
+
+## Elasticsearch Field Limit Maintenance
+
 
 `DOC_ENGINE=infinity` in `.env` selects Infinity as the vector backend. Config in `infinity_conf.toml` (version must match image tag, currently `v0.7.0`). Data persisted in `srv/stack/infinity/`.
+
+**2026-06-30 Infinity crash**: WAL replay aborted with `JsonTermT overflow: JSON index term exceeds JSON_TERM_MAX_LENGTH`, bringing the service down in a restart loop and breaking RAGFlow uploads. Fix was to stop the stack, back up `/srv/stack/infinity` (see `infinity.backup-20260630`), drop KB `manuals` (`bda8b8a873c211f1973ea923a4b850bd`) from MySQL (`knowledgebase`, `document`, `task`, `file2document`), and recreate an empty `srv/stack/infinity/`. Infinity now starts clean; re-ingest the manuals dataset manually once the underlying upstream bug is addressed.
 
 To revert to Elasticsearch: set `DOC_ENGINE=elasticsearch` in `.env`, swap infinity for elasticsearch in the compose file, and add an Elasticsearch endpoint to Gatus. The old ES data in `srv/stack/elasticsearch/` was not deleted and can be reused. All previously indexed knowledge base documents must be re-parsed when switching backends — there is no cross-engine vector migration.
 
@@ -214,14 +233,66 @@ To revert to Elasticsearch: set `DOC_ENGINE=elasticsearch` in `.env`, swap infin
 
 **Symptom**: After a restart, 1–3 tasks process quickly, then the executor goes silent for 20–30 min (GraphRAG/RAPTOR phase). Meanwhile 100+ tasks never get picked up. `XINFO GROUPS te.0.common` shows a large `pending` count and many dead consumers.
 
-**Automatic fix**: A `post_start` lifecycle hook on the ragflow service (added 2026-06-29) runs `scripts/reclaim-tasks-on-startup.py` after each restart. It waits 20s for the executor to start, finds the new live consumer (smallest idle time), then `XAUTOCLAIM`s all stale tasks (idle > 35 min) to it.
+**Automatic fix**: `entrypoint.sh` runs `scripts/reclaim-tasks-on-startup.py` after all services start (added 2026-06-30, improved 2026-07-01). It waits 60s for the executor to register in Redis, finds the live consumer (lightest load), then runs two-stage reclaim:
+1. `XAUTOCLAIM` — messages idle > 35 min → lightest alive consumer
+2. `XCLAIM` force-claim — messages from dead (idle > 5 min) or overloaded (> 8 pending) consumers → lightest alive consumer
 
 **Manual fix**: Run from `~/git/homelab_ai/nuc25.local`:
 ```bash
 ./scripts/reclaim-ragflow-tasks.sh
 ```
 
+**Debugging stuck tasks**: Check Redis stream state:
+```bash
+# SSH to nuc25.local, then run inside ragflow container:
+docker exec rag_ai_stack-ragflow-1 python3 -c "
+import valkey; r=valkey.Valkey(host='redis', port=6379, db=1, password='...')
+print('Consumers:', r.xinfo_consumers('te.0.common', 'rag_flow_svr_task_broker'))
+print('Groups:', r.xinfo_groups('te.0.common'))
+"
+```
+- `consumers` > 1 with high `idle` = dead consumers from previous restarts
+- `pending` > 0 with no live consumer = tasks are stranded
+- `lag` > 0 = new tasks waiting to be delivered
+
+**PaddleOCR model config corruption (2026-06-30)**: If tasks fail with `LookupError: Model config not found: PaddleOCR-VL@...`, check:
+1. `tenant_model_instance.instance_name` — may be corrupted (was `pad 42`)
+2. `tenant_model.model_name` — must match the model reference string
+3. `user_canvas.dsl` — dataflow configs cache the full model reference (`model@instance@provider`). If the instance name changes, old dataflows break.
+
+Fix: Update DB entries and recreate affected dataflows, or manually patch `user_canvas.dsl`:
+```sql
+UPDATE user_canvas SET dsl = REPLACE(dsl, 'old_model@bad_instance@PaddleOCR', 'correct_model@correct_instance@PaddleOCR');
+```
+
+**PDF page render failures (2026-06-30)**: `pypdfium2` (via `pdfplumber`) can fail to render individual pages of large PDFs (e.g., ~150 pages fail in a 400-page document). Upstream `paddleocr_parser.py` uses a list comprehension in `__images__` that aborts entirely if any single page throws, leaving `self.page_images = None`. This causes hundreds of `[PaddleOCR] crop called without page images; skipping image generation.` warnings and empty documents.
+
+Fix: `patches/paddleocr_parser.py` replaces the list comprehension with per-page `try/except` — bad pages are skipped (logged at `debug` level) and the rest continue processing. Mounted in `docker-compose` at `/ragflow/deepdoc/parser/paddleocr_parser.py:ro`.
+
 **LLM connection for GraphRAG/RAPTOR**: RAGFlow's default LLM (`apple-on-device@swift-ane`) connects to `http://macstudio.local:11537/v1`. If that service is down, GraphRAG and RAPTOR phases silently retry/timeout for up to 30 min per document (configured in KB parser config). Gatus monitors this endpoint. If tasks are stuck with no log output for > 5 min, check Gatus for the apple-on-device status.
+
+## MinerU Document Parsing
+
+RAGFlow routes PDF parsing through the MinerU API on `macstudio.local:8086` instead of local PaddleOCR. The integration is patched to avoid timeouts and support the local `hybrid-engine` backend:
+
+- `patches/ocr_model.py` — routes `layout_recognize=mineru-from-env` to the MinerU parser.
+- `patches/mineru_parser.py` — replaces the synchronous `/file_parse` endpoint (30-minute timeout on large PDFs) with the async `/tasks` endpoint + polling. Also adds `hybrid-engine` to the MinerUBackend enum/validation list.
+- `scripts/mineruparse.py` — standalone CLI to parse PDFs directly with MinerU and write per-file output directories.
+
+**Backend configuration**: RAGFlow reads the active MinerU backend from `tenant_model_instance.api_key` (JSON with `mineru_backend`). Updating `.env` alone is not enough; patch the DB row for the MinerU model instance, e.g.:
+
+```sql
+UPDATE tenant_model_instance
+SET api_key = JSON_SET(api_key, '$.mineru_backend', 'hybrid-engine')
+WHERE id = '<mineru_instance_id>';
+```
+
+**Re-parsing selected documents**: `scripts/reparse-switch-5docs.py` clears all tasks in the `switch` knowledgebase, truncates the Redis task stream, and re-queues only the selected documents. Use it when changing MinerU backend or after applying parser patches.
+
+**Operational notes**:
+- MinerU on `hybrid-engine` (Apple MPS) is single-threaded (`max_concurrent_requests=1`) and can spend 10–20 minutes per 12-page PDF range on complex manuals.
+- After MinerU returns, RAGFlow runs `qwen3vl-it:4b` (via `img2txt_id`) for image descriptions; this is also slow and can occasionally deadlock the task executor.
+- If a task executor stops making progress (low CPU, no log updates for >10 min on an active task), killing the stuck `rag/svr/task_executor.py` process lets `entrypoint.sh` restart it and the reclaim script redelivers pending messages.
 
 ## Known Active Issues
 

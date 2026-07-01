@@ -195,6 +195,16 @@ endpoints:
     alerts:
       - type: ntfy
 
+  - name: MinerU API server
+    group: "macstudio — ML Services"
+    url: "http://${MACSTUDIO_IP}:8086/health"
+    description: "MinerU document parsing API | host: ${MACSTUDIO_IP}:8086 | backend: hybrid-engine (local VLM on MPS) | launchd: com.macaistack.mineru"
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+    alerts:
+      - type: ntfy
+
   - name: Infinity (Embedding/Rerank)
     group: "macstudio — ML Services"
     url: "http://${MACSTUDIO_IP}:7997/health"

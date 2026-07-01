@@ -14,15 +14,17 @@ homelab_ai/
 ```
 
 Work from the host subdirectory, not the repo root:
-- **nuc25.local tasks** → `cd ~/git/homelab_ai/nuc25.local`
+- **nuc25.local tasks** → `cd ~/git/homelab_ai/nuc25.local` (but note: this repo is local on tp42; actual Docker stack runs on nuc25 — use SSH for operations)
 - **macstudio tasks** → `ssh macstudio` then `cd ~/git/homelab_ai/macstudio.local`
+
+> **Topology**: `tp42.local` is the local machine (this repo clone). `nuc25.local` is a remote running the Docker Compose stack. `macstudio.local` is a remote for GPU services. All file edits happen locally on tp42 and must be synced to the remotes via git or SCP.
 
 ## Fleet Overview
 
 | Host | Role | Managed via |
 |------|------|-------------|
 | `nuc25.local` | RAGFlow core, Langfuse observability, web scraping, health monitoring | Docker Compose |
-| `macstudio.local` | Embedding/rerank (Infinity), OCR inference (mlx-vlm/PaddleOCR-VL), speech-to-text (wyoming-whisper-cpp), Apple FoundationModels | launchd agents |
+| `macstudio.local` | Embedding/rerank (Infinity), OCR inference (mlx-vlm/PaddleOCR-VL, proxied via nuc25 `paddleocr` container), speech-to-text (wyoming-whisper-cpp), Apple FoundationModels | launchd agents |
 
 ## Standing Rules — Apply to All Hosts
 

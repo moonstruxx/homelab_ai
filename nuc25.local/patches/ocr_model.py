@@ -163,28 +163,44 @@ class PaddleOCROcrModel(Base, PaddleOCRParser):
 
     def __images__(self, fnm, page_from=0, page_to=MAXIMUM_PAGE_NUMBER, callback=None):
         # Serialise via _PDF_RENDER_LOCK: libpdfium is not thread-safe under concurrent failures.
+        # Use pypdfium2 directly with a SINGLE document instead of pdfplumber's to_image()
+        # which opens a new PdfDocument for every page (causes state corruption on large PDFs).
         self.page_from = page_from
         self.page_to = page_to
         with _PDF_RENDER_LOCK:
             try:
-                src = (
-                    pdfplumber.open(fnm)
-                    if isinstance(fnm, (str, PathLike))
-                    else pdfplumber.open(BytesIO(fnm))
-                )
-                with src as pdf:
-                    page_images = []
-                    for i, p in enumerate(pdf.pages[page_from:page_to]):
-                        try:
-                            page_images.append(p.to_image(resolution=72, antialias=True).original)
-                        except Exception as page_err:
-                            self.logger.warning(
-                                f"[PaddleOCR] skipping page {page_from + i} (render failed): {page_err}"
-                            )
+                import pypdfium2
+                from PIL import Image
+
+                # Open document once
+                if isinstance(fnm, (str, PathLike)):
+                    doc = pypdfium2.PdfDocument(str(fnm))
+                else:
+                    data = fnm if isinstance(fnm, bytes) else fnm.getbuffer().tobytes()
+                    doc = pypdfium2.PdfDocument(BytesIO(data))
+
+                total_pages = len(doc)
+                end = min(page_to, total_pages)
+                page_images = []
+                for i in range(page_from, end):
+                    try:
+                        page = doc.get_page(i)
+                        pil_img = page.render(
+                            scale=1.0,
+                            no_smoothtext=False,
+                            no_smoothpath=False,
+                            no_smoothimage=False,
+                        ).to_pil().convert("RGB")
+                        page_images.append(pil_img)
+                    except Exception as page_err:
+                        self.logger.debug(
+                            f"[PaddleOCR] skipping page {i} (render failed): {page_err}"
+                        )
+                doc.close()
                 self.page_images = page_images if page_images else None
             except Exception as e:
                 self.page_images = None
-                self.logger.exception(e)
+                self.logger.warning(f"[PaddleOCR] failed to generate page images: {e}")
             finally:
                 gc.collect()
 
