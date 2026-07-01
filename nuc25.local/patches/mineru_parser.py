@@ -300,7 +300,7 @@ class MinerUParser(RAGFlowPdfParser):
             "return_middle_json": True,
             "return_model_output": True,
             "return_content_list": True,
-            "return_images": True,
+            "return_images": False,
             "response_format_zip": True,
             "start_page_id": 0,
             "end_page_id": 99999,
