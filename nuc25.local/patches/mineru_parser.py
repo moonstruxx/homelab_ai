@@ -141,6 +141,8 @@ class MinerUParseOptions:
     parse_method: str = "raw"
     formula_enable: bool = True
     table_enable: bool = True
+    from_page: int = 0
+    to_page: int = 99999
 
 
 class MinerUParser(RAGFlowPdfParser):
@@ -302,8 +304,8 @@ class MinerUParser(RAGFlowPdfParser):
             "return_content_list": True,
             "return_images": False,
             "response_format_zip": True,
-            "start_page_id": 0,
-            "end_page_id": 99999,
+            "start_page_id": options.from_page,
+            "end_page_id": options.to_page,
         }
 
         if options.server_url:
@@ -862,6 +864,8 @@ class MinerUParser(RAGFlowPdfParser):
                 parse_method=parse_method,
                 formula_enable=enable_formula,
                 table_enable=enable_table,
+                from_page=kwargs.get("from_page", 0),
+                to_page=kwargs.get("to_page", 99999),
             )
             final_out_dir = self._run_mineru(pdf, out_dir, options, callback=callback)
             outputs = self._read_output(final_out_dir, pdf.stem, method=mineru_method_raw_str, backend=backend)
