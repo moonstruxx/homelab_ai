@@ -140,7 +140,7 @@ Key flags passed via the compose `command:` block:
 
 ## Vector Database Selection
 
-The `DOC_ENGINE` variable in `.env` selects the vector backend. Currently set to `elasticsearch`. Alternatives: `infinity`, `oceanbase`, `opensearch`, `seekdb`. The corresponding compose profile must be active and the appropriate connection block in `service_conf.yaml.template` applies.
+The `DOC_ENGINE` variable in `.env` selects the vector backend. Currently set to `infinity` (as of 2026-07-11; see the 2026-06-30 Infinity crash note below — this was reverted back to `infinity` after re-creating a clean data dir, not switched to Elasticsearch). Alternatives: `elasticsearch`, `oceanbase`, `opensearch`, `seekdb`. The corresponding compose profile must be active and the appropriate connection block in `service_conf.yaml.template` applies.
 
 ## Image Update Strategy (three-tier pinning)
 
@@ -227,6 +227,14 @@ RAGFLOW_API_KEY=ragflow-xxxx \
 
 To revert to Elasticsearch: set `DOC_ENGINE=elasticsearch` in `.env`, swap infinity for elasticsearch in the compose file, and add an Elasticsearch endpoint to Gatus. The old ES data in `srv/stack/elasticsearch/` was not deleted and can be reused. All previously indexed knowledge base documents must be re-parsed when switching backends — there is no cross-engine vector migration.
 
+**Finding/removing orphaned Infinity data**: `scripts/cleanup-infinity-orphans.py` diffs Infinity's tables (`ragflow_<tenant_id>_<kb_id>`) and their `doc_id` chunks against MySQL's live `knowledgebase`/`document` rows. Two orphan types: whole tables for KBs deleted from MySQL, and stray chunks left behind after a document row was deleted without its Infinity chunks being cleaned up. Dry run by default; add `--apply` to delete. Must run inside the `ragflow` container (needs `common.settings`/`docStoreConn`):
+```bash
+docker cp scripts/cleanup-infinity-orphans.py rag_ai_stack-ragflow-1:/tmp/
+docker exec -i rag_ai_stack-ragflow-1 python3 /tmp/cleanup-infinity-orphans.py           # report only
+docker exec -i rag_ai_stack-ragflow-1 python3 /tmp/cleanup-infinity-orphans.py --apply   # delete orphans
+```
+As of 2026-07-11 a dry run found zero orphans (3 live KBs, all tables clean) — the `switch` KB's low `chunk_num` vs. `doc_num` (28 chunks / 101 docs) is unparsed/pending documents, not orphaned Infinity data; see MinerU operational notes above.
+
 ## RAGFlow Task Executor: Stranded Redis Stream Tasks
 
 **Root cause**: Each ragflow restart creates a new task executor with a new consumer ID in the Redis Stream (`te.0.common`, group `rag_flow_svr_task_broker`). The previous executor's in-flight tasks stay in its dead consumer's PEL (pending entry list) and are never automatically redelivered. After many restarts, hundreds of tasks accumulate as stranded.
@@ -297,3 +305,5 @@ WHERE id = '<mineru_instance_id>';
 ## Known Active Issues
 
 See `KNOWN_ISSUES.md` for current known warnings and issues (SearXNG engines, ragflow term.freq, Elasticsearch SSL, LLM locale error). Root cause pattern: services configured with `localhost` instead of container DNS names.
+
+**2026-07-11 mysqld crash loop from an orphaned duplicate compose project (resolved)**: `rag_ai_stack-mysql-1` crash-looped with `[InnoDB] Unable to lock ./ibdata1 error: 11` (`Resource temporarily unavailable`). Root cause: a stale compose project named `nuc25local` — the sanitized default project name Docker Compose derives from the directory `nuc25.local` when `COMPOSE_PROJECT_NAME` isn't picked up — had 5 leftover containers (`nuc25local-mysql-1`, `-minio-1`, `-redis-1`, `-tailscale-1`, `-elasticsearch-1`) bind-mounting the *exact same* host data directories as the current `rag_ai_stack` project (which `.env`'s `COMPOSE_PROJECT_NAME=rag_ai_stack` now correctly names). The orphaned mysqld kept grabbing the `ibdata1` file lock before the real one could, and the real `ragflow` container stayed stuck in `Created` state waiting on a healthy mysql dependency. Fix: `docker stop`/`docker rm` the 5 orphaned `nuc25local-*` containers (no data loss — same bind mounts, just duplicate processes), then `docker compose -f common-docker-compose.nuc25-es-web.yml up -d ragflow`. If mysqld (or another stateful service) crash-loops with a file-lock error again, check `docker ps -a --format '{{.Names}}\t{{.Label "com.docker.compose.project"}}'` for a second project mounting the same `srv/stack/*` paths before assuming data corruption.
