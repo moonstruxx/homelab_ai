@@ -18,6 +18,8 @@ Work from the host subdirectory, not the repo root:
 - **macstudio tasks** → `ssh macstudio` then `cd ~/git/homelab_ai/macstudio.local`
 
 > **Topology**: `tp42.local` is the local machine (this repo clone). `nuc25.local` is a remote running the Docker Compose stack. `macstudio.local` is a remote for GPU services. All file edits happen locally on tp42 and must be synced to the remotes via git or SCP.
+>
+> **At the start of a fresh session, run `hostname` (or check the shell prompt) to confirm which machine you're actually on** — don't assume it from PWD alone, since being inside `nuc25.local/` or `macstudio.local/` just means you're editing that host's config files, not running on that host.
 
 ## Fleet Overview
 
