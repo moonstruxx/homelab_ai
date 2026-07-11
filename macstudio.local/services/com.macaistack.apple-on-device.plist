@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.macaistack.apple-on-device</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>open</string>
+		<string>/Users/bjorn/Library/Developer/Xcode/DerivedData/AppleOnDeviceOpenAI-dhyuinumqiimrzbjlsihfgpuzioh/Build/Products/Debug/AppleOnDeviceOpenAI.app</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+	<key>StandardOutPath</key>
+	<string>/Users/bjorn/Library/Logs/macaistack-apple-on-device.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/bjorn/Library/Logs/macaistack-apple-on-device.log</string>
+	<key>KeepAlive</key>
+	<true/>
+</dict>
+</plist>
