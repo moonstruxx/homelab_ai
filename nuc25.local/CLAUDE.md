@@ -341,4 +341,22 @@ Then re-parse the affected documents to recreate the table with the corrected sc
 
 See `KNOWN_ISSUES.md` for current known warnings and issues (SearXNG engines, ragflow term.freq, Elasticsearch SSL, LLM locale error). Root cause pattern: services configured with `localhost` instead of container DNS names.
 
+**2026-07-11 img2txt VLM (macstudio:8888) hang → document parse stuck retrying forever (resolved)**: A document's parse task (e.g. `droid.docx`) got stuck at `Parser_0`, logging `Request timed out` every ~15-17s indefinitely — the task never completed and never gave up (predates the exponential-backoff patch above; even with it, this class of failure — `ConnectTimeout`/`httpcore.ConnectTimeout`, classified `ERROR_TIMEOUT` not `ERROR_CONNECTION` by `_classify_error`, since "timed out" matches before "connect" in the keyword list — is **not** in `_retryable_errors`, so it isn't the chat_model.py retry loop looping here; the DOCX/dataflow img2txt call path has its own retry behavior). Root cause: `unsloth studio` on macstudio (port 8888, serves `Qwen3-VL-30B-A3B-Instruct-MLX-4bit`, the `img2txt_id` model) hung — listening but never responding, even to `curl localhost:8888` from macstudio itself — after ~11h uptime, with request latency visibly climbing beforehand (resource exhaustion, not a crash). See macstudio.local/CLAUDE.md's "unsloth studio" section for the fix (kill, restart, reload model). **After fixing the backend**, stuck documents need to be individually reset and re-queued — do **not** reuse `scripts/reparse-3kbs-post-infinity-wipe-20260711.py` for a single stuck document, it wipes the entire shared Redis task stream (`common_settings.get_svr_queue_name(0, "common")`), cancelling/losing progress on every other in-flight document across all KBs. Scoped single-document pattern (run inside the `ragflow` container):
+```python
+from common import settings
+settings.init_settings()
+from api.db.services.document_service import DocumentService
+from api.db.services.knowledgebase_service import KnowledgebaseService
+from api.db.services.task_service import cancel_all_task_of, TaskService
+
+DOC_ID = "..."
+doc = DocumentService.query(id=DOC_ID)[0]
+kb = KnowledgebaseService.query(id=doc.kb_id)[0]
+cancel_all_task_of(DOC_ID)
+TaskService.model.delete().where(TaskService.model.doc_id == DOC_ID).execute()
+DocumentService.model.update(chunk_num=0, progress=0, progress_msg="").where(DocumentService.model.id == DOC_ID).execute()
+DocumentService.clear_chunk_num(DOC_ID)
+DocumentService.run(kb.tenant_id, DocumentService.query(id=DOC_ID)[0].to_dict(), {})
+```
+
 **2026-07-11 mysqld crash loop from an orphaned duplicate compose project (resolved)**: `rag_ai_stack-mysql-1` crash-looped with `[InnoDB] Unable to lock ./ibdata1 error: 11` (`Resource temporarily unavailable`). Root cause: a stale compose project named `nuc25local` — the sanitized default project name Docker Compose derives from the directory `nuc25.local` when `COMPOSE_PROJECT_NAME` isn't picked up — had 5 leftover containers (`nuc25local-mysql-1`, `-minio-1`, `-redis-1`, `-tailscale-1`, `-elasticsearch-1`) bind-mounting the *exact same* host data directories as the current `rag_ai_stack` project (which `.env`'s `COMPOSE_PROJECT_NAME=rag_ai_stack` now correctly names). The orphaned mysqld kept grabbing the `ibdata1` file lock before the real one could, and the real `ragflow` container stayed stuck in `Created` state waiting on a healthy mysql dependency. Fix: `docker stop`/`docker rm` the 5 orphaned `nuc25local-*` containers (no data loss — same bind mounts, just duplicate processes), then `docker compose -f common-docker-compose.nuc25-es-web.yml up -d ragflow`. If mysqld (or another stateful service) crash-loops with a file-lock error again, check `docker ps -a --format '{{.Names}}\t{{.Label "com.docker.compose.project"}}'` for a second project mounting the same `srv/stack/*` paths before assuming data corruption.

@@ -182,6 +182,29 @@ Venv: `~/.venv-vllm-metal`.
 
 **Health endpoint:** `GET /health` → OpenAI-compatible liveness response.
 
+## unsloth studio (img2txt VLM backend)
+
+Serves `Qwen3-VL-30B-A3B-Instruct-MLX-4bit` (vision-capable) on `0.0.0.0:8888`, OpenAI-compatible API. RAGFlow on nuc25.local uses it as the `img2txt_id` model (`Qwen3-VL-30B-A3B-Instruct-MLX-4bit@us@OpenAI-API-Compatible`, `tenant_model_instance` row for provider instance `us`, `api_key` JSON `{"base_url": "http://macstudio.local:8888/v1", ...}`) for image captioning during document parsing (dataflow's img2txt step — invoked for any embedded images, e.g. in DOCX/PDF documents with figures).
+
+**Not a managed launchd service** — started manually/interactively (`unsloth studio -H 0.0.0.0 -p 8888 --disable-tools`), no `KeepAlive`, no auto-restart on crash or hang. Also used ad-hoc for loading/testing other local models (gemma, etc.) throughout the day — expect the loaded model to change; check `GET /v1/models` (auth: `Authorization: Bearer <api_key from tenant_model_instance>`) before assuming Qwen3-VL is active.
+
+**Model must be explicitly loaded after every restart** — the server does not auto-load on startup. A restart without loading returns `400 {"error": {"message": "No model loaded. Call POST /inference/load first."}}` for every inference request (RAGFlow tasks see this as instant "Request timed out"/`Error code: 400` bursts). Load it:
+```bash
+curl -X POST -H "Authorization: Bearer <api_key>" -H "Content-Type: application/json" \
+  -d '{"model_path": "/ext/Modelle/lmstudio-community/Qwen3-VL-30B-A3B-Instruct-MLX-4bit"}' \
+  http://localhost:8888/v1/load
+```
+Verify with a real completion (not just `/v1/models`, which responds even mid-hang):
+```bash
+curl -H "Authorization: Bearer <api_key>" -H "Content-Type: application/json" \
+  -d '{"model":"Qwen3-VL-30B-A3B-Instruct-MLX-4bit","messages":[{"role":"user","content":"say hi"}],"max_tokens":5}' \
+  http://localhost:8888/v1/chat/completions
+```
+
+**2026-07-11 hang incident**: process ran fine for ~11h (loaded 09:58, serving normally) then went completely unresponsive at 21:33 — even `curl localhost:8888` *from macstudio itself* timed out. Server log (`~/.unsloth/studio/logs/server/server-<ts>-pid<pid>.log`) showed request latency climbing steadily right before the hang (200ms → 5s → 19.7s) with no error, then total silence — resource exhaustion, not a crash. `kill -TERM <pid>` shut it down cleanly (it also auto-cleaned an orphaned `llama-server` child process on the next startup). Symptom on the RAGFlow side: a document's parse task stuck retrying "Request timed out" every ~15-17s indefinitely (task never completed, never gave up) for as long as the hang lasted. **Fix**: `kill -TERM <pid>`, restart with the same command (`nohup ... &` + `disown` to survive SSH disconnect), reload the model via `/v1/load`, then re-queue any documents that failed out (see nuc25.local/CLAUDE.md's RAGFlow section for the single-document reparse pattern).
+
+No Gatus check currently covers this endpoint — worth adding given it fails silently (listens but never responds) rather than refusing connections, which a naive liveness probe might miss depending on timeout.
+
 ## memory-health-server
 
 Stdlib Python HTTP server (`services/memory-health-server.py`) exposing macOS memory pressure on **port 9101**. Gatus polls every 60 s and alerts via ntfy after 3 consecutive failures.
