@@ -215,13 +215,27 @@ endpoints:
     alerts:
       - type: ntfy
 
-  - name: Unsloth Studio
+  - name: Unsloth Studio (img2txt VLM)
     group: "macstudio — ML Services"
-    url: "http://${MACSTUDIO_IP}:8888/"
-    description: "Unsloth Studio fine-tuning | host: ${MACSTUDIO_IP}:8888 | external: http://${MACSTUDIO_IP}:8888"
+    url: "http://${MACSTUDIO_IP}:8888/api/inference/status"
+    headers:
+      Authorization: "Bearer ${UNSLOTH_API_KEY}"
+    # Checks the currently-loaded model, not just HTTP reachability: after the 2026-07-11
+    # hang incident (server wedged, listening but never responding -- see nuc25.local/CLAUDE.md
+    # and macstudio.local/CLAUDE.md), a plain reachability/root check would also have caught
+    # a full hang (the whole event loop was stuck, not just inference), but would NOT catch
+    # the secondary failure mode hit during recovery: a freshly-restarted server returns 200
+    # immediately but has no model loaded (RAGFlow's img2txt calls then fail with
+    # "400 No model loaded"). /api/inference/status is lightweight (no real generation, unlike
+    # a full /v1/chat/completions call) and reports active_model, so this condition catches both.
+    # Tradeoff: this box is also used interactively to load/unload other models (gemma, etc.)
+    # throughout the day -- a real "wrong model loaded for RAGFlow" state will legitimately
+    # alert here, which is intentional (img2txt WILL fail in that state), not a false positive.
+    description: "Unsloth Studio img2txt VLM (Qwen3-VL-30B-A3B-Instruct-MLX-4bit) | host: ${MACSTUDIO_IP}:8888 | consumed by RAGFlow's img2txt_id for image captioning during document parsing | not a managed launchd service -- see macstudio.local/CLAUDE.md for restart/reload procedure"
     interval: 60s
     conditions:
       - "[STATUS] == 200"
+      - "[BODY].active_model == /ext/Modelle/lmstudio-community/Qwen3-VL-30B-A3B-Instruct-MLX-4bit"
     alerts:
       - type: ntfy
 

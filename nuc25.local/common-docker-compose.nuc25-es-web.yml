@@ -594,6 +594,7 @@ services:
       - "0.0.0.0:${GATUS_PORT:-8090}:8080"
     environment:
       MACSTUDIO_IP: ${MACSTUDIO_IP:-192.168.1.114}
+      UNSLOTH_API_KEY: ${UNSLOTH_API_KEY}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
