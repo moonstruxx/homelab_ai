@@ -39,7 +39,8 @@ from rag.llm.key_utils import _normalize_replicate_key
 from rag.llm.tool_decorator import FunctionToolSession, is_tool
 from rag.nlp import is_chinese, is_english
 
-# Retry backoff: starts at 500ms, doubles every 2 attempts, capped at 2h.
+# Retry backoff: exponential ceiling starts at 500ms, doubles every 2 attempts,
+# capped at 2h; equal jitter is applied on top (see _get_delay).
 RETRY_BASE_DELAY_SECONDS = 0.5
 RETRY_MAX_DELAY_SECONDS = 2 * 60 * 60
 
@@ -239,7 +240,12 @@ class Base(ABC):
         self.last_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     def _get_delay(self, attempt):
-        return min(RETRY_MAX_DELAY_SECONDS, RETRY_BASE_DELAY_SECONDS * (2 ** (attempt // 2)))
+        # Equal jitter (AWS "Exponential Backoff And Jitter"): compute the exponential
+        # ceiling, keep half as a guaranteed floor, randomize the other half. Preserves
+        # the growth + 2h cap while de-synchronizing concurrent retriers so they don't
+        # re-collide in lockstep against the same overloaded backend.
+        ceiling = min(RETRY_MAX_DELAY_SECONDS, RETRY_BASE_DELAY_SECONDS * (2 ** (attempt // 2)))
+        return ceiling / 2 + random.uniform(0, ceiling / 2)
 
     def _classify_error(self, error):
         error_str = str(error).lower()
@@ -1631,7 +1637,12 @@ class LiteLLMBase(ABC):
             self.group_id = ""
 
     def _get_delay(self, attempt):
-        return min(RETRY_MAX_DELAY_SECONDS, RETRY_BASE_DELAY_SECONDS * (2 ** (attempt // 2)))
+        # Equal jitter (AWS "Exponential Backoff And Jitter"): compute the exponential
+        # ceiling, keep half as a guaranteed floor, randomize the other half. Preserves
+        # the growth + 2h cap while de-synchronizing concurrent retriers so they don't
+        # re-collide in lockstep against the same overloaded backend.
+        ceiling = min(RETRY_MAX_DELAY_SECONDS, RETRY_BASE_DELAY_SECONDS * (2 ** (attempt // 2)))
+        return ceiling / 2 + random.uniform(0, ceiling / 2)
 
     def _classify_error(self, error):
         error_str = str(error).lower()

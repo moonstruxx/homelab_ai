@@ -165,9 +165,10 @@ services:
       # Patch: transient connection errors (APIConnectionError) were classified as non-retryable,
       # so any LLM connection hiccup (e.g. local on-device model briefly overloaded under concurrent
       # parses) gave up instantly with zero backoff instead of retrying. Adds ERROR_CONNECTION to
-      # both _retryable_errors sets (Base and LiteLLMBase). Retry backoff is exponential: 500ms
-      # start, doubles every 2 attempts, capped at 2h; 29 retries total, ~6.55h accumulated wait
-      # before giving up (see nuc25.local/CLAUDE.md's "LLM Chat Model Patches" section).
+      # both _retryable_errors sets (Base and LiteLLMBase). Retry backoff is exponential with
+      # equal jitter: 500ms start, doubles every 2 attempts, capped at 2h; 29 retries total,
+      # ~4.9h expected accumulated wait (3.3h min / 6.55h max) before giving up (see
+      # nuc25.local/CLAUDE.md's "LLM Chat Model Patches" section).
       - ./patches/chat_model.py:/ragflow/rag/llm/chat_model.py:ro
       - ./scripts/reclaim-tasks-on-startup.py:/ragflow/reclaim-tasks-on-startup.py:ro
     post_start:
