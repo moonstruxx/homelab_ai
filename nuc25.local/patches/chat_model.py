@@ -39,6 +39,10 @@ from rag.llm.key_utils import _normalize_replicate_key
 from rag.llm.tool_decorator import FunctionToolSession, is_tool
 from rag.nlp import is_chinese, is_english
 
+# Retry backoff: starts at 500ms, doubles every 2 attempts, capped at 2h.
+RETRY_BASE_DELAY_SECONDS = 0.5
+RETRY_MAX_DELAY_SECONDS = 2 * 60 * 60
+
 
 class LLMErrorCode(StrEnum):
     ERROR_RATE_LIMIT = "RATE_LIMIT_EXCEEDED"
@@ -221,8 +225,10 @@ class Base(ABC):
         self.client = OpenAI(api_key=key, base_url=base_url, timeout=timeout)
         self.async_client = AsyncOpenAI(api_key=key, base_url=base_url, timeout=timeout)
         self.model_name = model_name
-        # Configure retry parameters
-        self.max_retries = kwargs.get("max_retries", int(os.environ.get("LLM_MAX_RETRIES", 5)))
+        # Configure retry parameters: exponential backoff, 500ms start, doubling
+        # every 2 attempts, capped at 2h. 29 retries (30 attempts total) exhausts
+        # the schedule with exactly one 2h wait before giving up.
+        self.max_retries = kwargs.get("max_retries", int(os.environ.get("LLM_MAX_RETRIES", 29)))
         self.base_delay = kwargs.get("retry_interval", float(os.environ.get("LLM_BASE_DELAY", 2.0)))
         self.max_rounds = kwargs.get("max_rounds", 5)
         self.is_tools = False
@@ -232,8 +238,8 @@ class Base(ABC):
         # Consumed by LLMBundle for accurate Langfuse reporting and run aggregation.
         self.last_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
-    def _get_delay(self):
-        return max(30.0, self.base_delay * random.uniform(10, 150))
+    def _get_delay(self, attempt):
+        return min(RETRY_MAX_DELAY_SECONDS, RETRY_BASE_DELAY_SECONDS * (2 ** (attempt // 2)))
 
     def _classify_error(self, error):
         error_str = str(error).lower()
@@ -357,7 +363,7 @@ class Base(ABC):
             error_code = LLMErrorCode.ERROR_MAX_RETRIES
 
         if self._should_retry(error_code):
-            delay = self._get_delay()
+            delay = self._get_delay(attempt)
             logging.warning(f"Error: {error_code}. Retrying in {delay:.2f} seconds... (Attempt {attempt + 1}/{self.max_retries})")
             time.sleep(delay)
             return None
@@ -373,7 +379,7 @@ class Base(ABC):
             error_code = LLMErrorCode.ERROR_MAX_RETRIES
 
         if self._should_retry(error_code):
-            delay = self._get_delay()
+            delay = self._get_delay(attempt)
             logging.warning(f"Error: {error_code}. Retrying in {delay:.2f} seconds... (Attempt {attempt + 1}/{self.max_retries})")
             await asyncio.sleep(delay)
             return None
@@ -1588,8 +1594,10 @@ class LiteLLMBase(ABC):
         self.model_name = f"{self.prefix}{model_name}"
         self.api_key = key
         self.base_url = (base_url or FACTORY_DEFAULT_BASE_URL.get(self.provider, "")).rstrip("/")
-        # Configure retry parameters
-        self.max_retries = kwargs.get("max_retries", int(os.environ.get("LLM_MAX_RETRIES", 5)))
+        # Configure retry parameters: exponential backoff, 500ms start, doubling
+        # every 2 attempts, capped at 2h. 29 retries (30 attempts total) exhausts
+        # the schedule with exactly one 2h wait before giving up.
+        self.max_retries = kwargs.get("max_retries", int(os.environ.get("LLM_MAX_RETRIES", 29)))
         self.base_delay = kwargs.get("retry_interval", float(os.environ.get("LLM_BASE_DELAY", 2.0)))
         self.max_rounds = kwargs.get("max_rounds", 5)
         self.is_tools = False
@@ -1622,8 +1630,8 @@ class LiteLLMBase(ABC):
         else:
             self.group_id = ""
 
-    def _get_delay(self):
-        return max(30.0, self.base_delay * random.uniform(10, 150))
+    def _get_delay(self, attempt):
+        return min(RETRY_MAX_DELAY_SECONDS, RETRY_BASE_DELAY_SECONDS * (2 ** (attempt // 2)))
 
     def _classify_error(self, error):
         error_str = str(error).lower()
@@ -1800,7 +1808,7 @@ class LiteLLMBase(ABC):
             error_code = LLMErrorCode.ERROR_MAX_RETRIES
 
         if self._should_retry(error_code):
-            delay = self._get_delay()
+            delay = self._get_delay(attempt)
             logging.warning(f"Error: {error_code}. Retrying in {delay:.2f} seconds... (Attempt {attempt + 1}/{self.max_retries})")
             await asyncio.sleep(delay)
             return None
