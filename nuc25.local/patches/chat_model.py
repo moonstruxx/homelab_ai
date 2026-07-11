@@ -233,7 +233,7 @@ class Base(ABC):
         self.last_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     def _get_delay(self):
-        return self.base_delay * random.uniform(10, 150)
+        return max(30.0, self.base_delay * random.uniform(10, 150))
 
     def _classify_error(self, error):
         error_str = str(error).lower()
@@ -1623,7 +1623,7 @@ class LiteLLMBase(ABC):
             self.group_id = ""
 
     def _get_delay(self):
-        return self.base_delay * random.uniform(10, 150)
+        return max(30.0, self.base_delay * random.uniform(10, 150))
 
     def _classify_error(self, error):
         error_str = str(error).lower()

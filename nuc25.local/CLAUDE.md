@@ -312,8 +312,9 @@ WHERE id = '<mineru_instance_id>';
 
 ## LLM Chat Model Patches
 
-- `patches/chat_model.py` — full copy of `rag/llm/chat_model.py` with two fixes, mounted at `/ragflow/rag/llm/chat_model.py:ro`:
+- `patches/chat_model.py` — full copy of `rag/llm/chat_model.py` with three fixes, mounted at `/ragflow/rag/llm/chat_model.py:ro`:
   1. **Retry on connection errors**: `_retryable_errors` (both the `Base` and `LiteLLMBase` classes) only included `ERROR_RATE_LIMIT` and `ERROR_SERVER`. A transient `APIConnectionError` (e.g. the local on-device LLM briefly overloaded when multiple documents parse concurrently) gets classified as `ERROR_CONNECTION`, which wasn't in that set — so `_should_retry` returned `False` and the call gave up **instantly with zero backoff** instead of retrying. This is why failures showed up as bursts of `MAX_RETRIES_EXCEEDED` within the same second rather than spaced-out retries. Fix adds `ERROR_CONNECTION` to both sets so it reuses the existing randomized backoff (`base_delay * uniform(10, 150)`, i.e. ~20–300s per attempt, up to `LLM_MAX_RETRIES` env var, default 5).
+  2. **30s minimum retry delay**: `_get_delay()` (both classes) computed `base_delay * random.uniform(10, 150)`, which with the default `base_delay=2.0` could draw as low as `2.0 * 10 = 20s` — below the minimum spacing wanted between retries against a connection-refused/overloaded LLM backend. Fix wraps both `_get_delay()` implementations in `max(30.0, ...)` so a retry never fires sooner than 30s after the previous attempt, regardless of the random draw.
   - Must be manually re-applied (diff against upstream `rag/llm/chat_model.py`) when `RAGFLOW_IMAGE` is bumped.
 
 **Symptom to watch for**: if task logs show many `async base giving up: **ERROR**: MAX_RETRIES_EXCEEDED - Connection error.` lines within the same second, the retry patch isn't loaded (check the bind mount and that the container was recreated, not just restarted — new volume mounts require `docker compose up -d ragflow`, not `restart`).
