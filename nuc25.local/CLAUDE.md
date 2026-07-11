@@ -306,6 +306,32 @@ WHERE id = '<mineru_instance_id>';
 - After MinerU returns, RAGFlow runs `qwen3vl-it:4b` (via `img2txt_id`) for image descriptions; this is also slow and can occasionally deadlock the task executor.
 - If a task executor stops making progress (low CPU, no log updates for >10 min on an active task), killing the stuck `rag/svr/task_executor.py` process lets `entrypoint.sh` restart it and the reclaim script redelivers pending messages.
 
+## LLM Chat Model Patches
+
+- `patches/chat_model.py` — full copy of `rag/llm/chat_model.py` with two fixes, mounted at `/ragflow/rag/llm/chat_model.py:ro`:
+  1. **Retry on connection errors**: `_retryable_errors` (both the `Base` and `LiteLLMBase` classes) only included `ERROR_RATE_LIMIT` and `ERROR_SERVER`. A transient `APIConnectionError` (e.g. the local on-device LLM briefly overloaded when multiple documents parse concurrently) gets classified as `ERROR_CONNECTION`, which wasn't in that set — so `_should_retry` returned `False` and the call gave up **instantly with zero backoff** instead of retrying. This is why failures showed up as bursts of `MAX_RETRIES_EXCEEDED` within the same second rather than spaced-out retries. Fix adds `ERROR_CONNECTION` to both sets so it reuses the existing randomized backoff (`base_delay * uniform(10, 150)`, i.e. ~20–300s per attempt, up to `LLM_MAX_RETRIES` env var, default 5).
+  - Must be manually re-applied (diff against upstream `rag/llm/chat_model.py`) when `RAGFLOW_IMAGE` is bumped.
+
+**Symptom to watch for**: if task logs show many `async base giving up: **ERROR**: MAX_RETRIES_EXCEEDED - Connection error.` lines within the same second, the retry patch isn't loaded (check the bind mount and that the container was recreated, not just restarted — new volume mounts require `docker compose up -d ragflow`, not `restart`).
+
+## Infinity Schema: Missing `toc` Column
+
+**Symptom**: dataflow agents using the Extractor node's "PageIndex" result destination fail late in parsing (often ~90%) with `INSERT: Column toc not found in table ragflow_<tenant_id>_<kb_id>`.
+
+**Root cause**: `rag/flow/extractor/extractor.py`'s `_build_TOC()` writes a literal `d["toc"]` field on the chunk dict before insert, but `conf/infinity_mapping.json` only ever defined `toc_kwd` (a keyword marker), not `toc` itself — an upstream schema/code mismatch, not specific to any one document or dataset.
+
+**Fix applied**: added `"toc": {"type": "varchar", "default": ""}` to `conf/infinity_mapping.json`. Since Infinity tables are created once per `(tenant_id, kb_id)` and not auto-migrated, any KB that already hit this error needs its existing table dropped so it's recreated with the new schema:
+
+```python
+# run inside the ragflow container: docker exec -i rag_ai_stack-ragflow-1 python3 - <<'EOF'
+from common import settings
+settings.init_settings()
+doc_store = settings.docStoreConn
+doc_store.delete_idx(f"ragflow_{TENANT_ID}", KB_ID)
+EOF
+```
+Then re-parse the affected documents to recreate the table with the corrected schema. A plain `docker compose restart ragflow` is enough to reload `conf/infinity_mapping.json` (bind-mounted read-write, no recreate needed since it's not a new mount — just changed content).
+
 ## Known Active Issues
 
 See `KNOWN_ISSUES.md` for current known warnings and issues (SearXNG engines, ragflow term.freq, Elasticsearch SSL, LLM locale error). Root cause pattern: services configured with `localhost` instead of container DNS names.
