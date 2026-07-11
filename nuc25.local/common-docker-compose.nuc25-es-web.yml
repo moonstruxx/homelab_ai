@@ -155,6 +155,12 @@ services:
       - ./patches/ocr_model.py:/ragflow/deepdoc/parser/ocr_model.py:ro
       # Patch: MinerU async API — synchronous /file_parse times out on long docs; use /tasks + polling.
       - ./patches/mineru_parser.py:/ragflow/deepdoc/parser/mineru_parser.py:ro
+      # Patch: transient connection errors (APIConnectionError) were classified as non-retryable,
+      # so any LLM connection hiccup (e.g. local on-device model briefly overloaded under concurrent
+      # parses) gave up instantly with zero backoff instead of retrying. Adds ERROR_CONNECTION to
+      # both _retryable_errors sets (Base and LiteLLMBase) so it uses the existing randomized
+      # 20-300s backoff (base_delay * uniform(10,150)) like rate-limit/server errors do.
+      - ./patches/chat_model.py:/ragflow/rag/llm/chat_model.py:ro
       - ./scripts/reclaim-tasks-on-startup.py:/ragflow/reclaim-tasks-on-startup.py:ro
     post_start:
       - command: ["python3", "/ragflow/reclaim-tasks-on-startup.py"]
