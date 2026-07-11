@@ -21,13 +21,13 @@ This stack spans two machines:
 |------|------|
 | `tp42.local` | **Local machine** — this repo clone (`~/git/homelab_ai/nuc25.local/`) |
 | `nuc25.local` | RAGFlow core, observability (Langfuse), web scraping, health monitoring (Gatus) — **remote Docker host** |
-| `macstudio.local` | GPU/ANE services — **`~/git/homelab_ai/macstudio.local`** (same monorepo): Infinity (embedding/rerank), apple-on-device-openai (Apple Intelligence via FoundationModels, port 11537), mlx-vlm server (PaddleOCR inference on port 8000 via `com.macaistack.vllm-paddle` launchd), anemll-server (ANE/CoreML, port 8000), Wyoming Whisper (speech-to-text on port 10300) |
+| `macstudio.local` | GPU/ANE services — **`~/git/homelab_ai/macstudio.local`** (same monorepo): Infinity (embedding/rerank), apple-on-device-openai (Apple Intelligence via FoundationModels, port 11537), mineru-api (PDF/OCR document parsing, port 8086 via `com.macaistack.mineru` launchd), unsloth studio (img2txt VLM, port 8888, not launchd-managed), anemll-server (ANE/CoreML, port 8000), Wyoming Whisper (speech-to-text on port 10300) |
 
 Services on both hosts share the same logical stack; RAGFlow on nuc25.local connects to macstudio.local for model inference and embeddings.
 
 **Sister stack on macstudio:** The macstudio services live in `~/git/homelab_ai/macstudio.local/` (same monorepo, locally accessible). To run commands on macstudio, SSH: `ssh macstudio` (configured in `~/.ssh/config` with `id_hetzner`).
 
-**tp42.local** is a separate host (192.168.1.169) running the native PaddleOCR layout-parsing service on port 8080 (`POST /layout-parsing`, `GET /health`). The `paddleocr` proxy container forwards to it. When tp42.local:8080 is unreachable, the proxy returns HTTP 503 on `/health` (and Gatus alerts).
+**tp42.local** is a separate host (192.168.1.169) running the native PaddleOCR layout-parsing service on port 8080 (`POST /layout-parsing`, `GET /health`). As of 2026-07-12 nothing in this stack consumes it — the `paddleocr` proxy container that used to forward to it was removed (see the OCR section below); Gatus still checks it directly ("tp42 PaddleOCR backend") pending a decision on whether that's worth keeping.
 
 ## Common Operations
 
@@ -44,8 +44,6 @@ docker compose -f $COMPOSE_FILE ps                                      # check 
 # Rebuild custom services after code/config changes
 docker compose -f $COMPOSE_FILE build caddy && \
   docker compose -f $COMPOSE_FILE up -d caddy                           # rebuild caddy (Tailscale reverse proxy)
-docker compose -f $COMPOSE_FILE build paddleocr && \
-  docker compose -f $COMPOSE_FILE up -d paddleocr                       # rebuild paddleocr (OCR API)
 docker compose -f $COMPOSE_FILE build spider-local && \
   docker compose -f $COMPOSE_FILE up -d spider-local                    # rebuild spider-local (web crawler)
 docker compose -f $COMPOSE_FILE build rag-mcp && \
@@ -55,13 +53,13 @@ docker compose -f $COMPOSE_FILE build rag-mcp && \
 ## Architecture
 
 Services run across three Docker bridge networks:
-- **`ragflow`** — application-tier services (searxng, spider-local, rag-mcp, paddleocr, tailscale, ntfy, wud, gatus, ragflow, langfuse-web, langfuse-worker)
+- **`ragflow`** — application-tier services (searxng, spider-local, rag-mcp, tailscale, ntfy, wud, gatus, ragflow, langfuse-web, langfuse-worker)
 - **`rag-data`** — data stores only (mysql, minio, redis, infinity, all four Langfuse backends). Isolated from app-tier services — SearXNG and spider-local cannot reach data stores by container name. Services that need data access (ragflow, langfuse-web, langfuse-worker, gatus) join both networks.
 - **`rag-ingress`** (external, pre-created) — thin cross-stack bridge. Only `gatus` joins it from this stack, to health-check Nextcloud and Paperless via the `aio-ingress` alias on the AIO tailscale container. Created once: `docker network create rag-ingress`.
 
 **Host-port exposure policy:**
 - **LAN-accessible (0.0.0.0):** RAGFlow web UI (80/443), RAGFlow API (9380), MCP server (9382), Langfuse UI (3000), MinIO console (9001), SearXNG (8088), WUD (3002), ntfy (5555), Gatus (8090)
-- **Loopback only (127.0.0.1):** RAGFlow admin/go ports (9381/9383/9384), PaddleOCR (8010), spider-local (11235), rag-mcp (11236), langfuse-minio (9090)
+- **Loopback only (127.0.0.1):** RAGFlow admin/go ports (9381/9383/9384), spider-local (11235), rag-mcp (11236), langfuse-minio (9090)
 - **No host publish** (intra-stack via `rag-data` only): mysql, redis, infinity, minio S3 API (port 9000; console 9001 is LAN-accessible)
 
 Three functional groups of services:
@@ -73,15 +71,11 @@ Three functional groups of services:
 - `infinity` — vector and full-text search (`infiniflow/infinity:v0.7.0`, data: `/srv/stack/infinity`); Thrift port 23817, HTTP port 23820, Postgres port 5432; config in `infinity_conf.toml`; `DOC_ENGINE=infinity` in `.env` selects it
 - `ragflow` — main application: serves UI (port 80/443), Python API (9380), Admin API (9381), MCP server (9382)
 
-### OCR (always on)
-- `paddleocr` — async job protocol proxy; host port `${PADDLEOCR_PORT:-8010}` → container port 8000; built from `paddleocr/`. Implements the **async job protocol** that the running RAGFlow Docker image calls, bridging to tp42's synchronous `/layout-parsing` API (env: `PADDLEOCR_BACKEND_URL=http://tp42.local:8080`). Extra-hosts entry in compose pins `tp42.local` → `${TP42_IP:-192.168.1.169}` so Docker DNS resolves it.
-  - `GET /health` — probes `tp42.local:8080/health`; returns 503 if unreachable
-  - `POST /api/v2/ocr/jobs` — multipart form (`file`, `model`, `optionalPayload`); fires background job calling tp42's `/layout-parsing` with the file as base64; returns `{"errorCode": 0, "data": {"jobId": "..."}}`
-  - `GET /api/v2/ocr/jobs/{job_id}` — returns `{"state": "processing|done|failed", "resultJsonUrl": "http://paddleocr:8000/api/v2/ocr/jobs/{job_id}/result"}`
-  - `GET /api/v2/ocr/jobs/{job_id}/result` — JSONL; each line: `{"result": {"layoutParsingResults": [...]}}`
-  **RAGFlow UI config**: Settings → Model Providers → PaddleOCR: Base URL = `http://paddleocr:8000`, Algorithm = `PaddleOCR-VL` (exact string — `PaddleOCR-VL-1.6` or similar will fail RAGFlow's internal validation). Model name = `PaddleOCR-VL-1.6`. The `paddleocr_api_url` in `tenant_model_instance.api_key` must be the bare base URL (`http://paddleocr:8000`), not a path — RAGFlow appends `/api/v2/ocr/jobs` itself. **Warning**: the running Docker image's `paddleocr_parser.py` differs from the ragflow submodule; it uses the async job protocol, not a direct POST. Always implement the async protocol in the proxy.
+### OCR
 
-  **2026-07-11: currently unused, despite "always on" above.** This proxy's upstream backend was `PaddlePaddle/PaddleOCR-VL` served by `vllm-metal` on macstudio:8000 (see macstudio.local/CLAUDE.md's "Retired: vllm-metal as PaddleOCR backend" section — that launchd service was replaced by mineru-api). As of 2026-07-11: `tenant_model` has zero PaddleOCR rows (only `mineru-from-env` remains as the `ocr` model type), and no knowledgebase's `layout_recognize` references PaddleOCR (`droid`/`laws_fine_chuncked` use `DeepDOC`, `switch` uses `mineru-from-env`) — the `paddleocr` container itself was also observed `unhealthy` (its target, `tp42.local:8080`, was unreachable at the time). The container, compose service, host port, and Gatus check ("PaddleOCR", `nuc25 — Observability` group) are all still present but not exercised by current KB configs. Whether to remove them or keep them for a future KB that wants PaddleOCR-VL again hasn't been decided — ask before ripping this out, since "unused right now" isn't the same as "safe to delete" until that's confirmed.
+PDF/document parsing goes through MinerU on macstudio (see "MinerU Document Parsing" below); RAGFlow's built-in DeepDOC layout recognizer handles the rest. There is no local OCR container in this compose stack.
+
+**Retired 2026-07-12: `paddleocr` async job protocol proxy.** Previously bridged RAGFlow's PaddleOCR model provider to tp42.local's native `/layout-parsing` service; upstream backend was `PaddlePaddle/PaddleOCR-VL` served by `vllm-metal` on macstudio:8000 (retired earlier — see macstudio.local/CLAUDE.md's "Retired: vllm-metal as PaddleOCR backend"). By 2026-07-11 `tenant_model` had zero PaddleOCR rows (only `mineru-from-env` remained as the `ocr` model type) and no knowledgebase's `layout_recognize` referenced PaddleOCR — confirmed genuinely unused before removal. Removed: the `paddleocr` compose service, its `nuc25.local/paddleocr/` source directory, its Gatus check, its Caddy `:8010` route, and its proxy-only `.env` vars (`PADDLEOCR_PORT`, `PADDLEOCR_BACKEND_URL`, `TP42_IP`). **Kept**: `patches/paddleocr_parser.py` and its bind mount — `PaddleOCROcrModel` in `patches/ocr_model.py` inherits from it, and `ocr_model.py` is load-bearing for the *active* MinerU routing patch, so deleting `paddleocr_parser.py` would break MinerU parsing, not just retired PaddleOCR support. Also kept: `PADDLEOCR_REQUEST_TIMEOUT` in `.env` (still a valid fallback default for `PaddleOCROcrModel`, harmless to leave) and Gatus's "tp42 PaddleOCR backend" check (monitors tp42.local:8080 directly, independent of the removed proxy — undecided whether tp42's native service still serves any purpose worth monitoring).
 
 ### Web Scraping (profile: `webscrape`)
 - `searxng` — metasearch engine, config in `searxng/settings.yml`, host port 8088 → container 8080 (JSON API enabled)
@@ -96,11 +90,10 @@ Three functional groups of services:
 - `langfuse-worker` — background processor, port 3030
 - `langfuse-web` — observability UI, port 3000
 
-**Langfuse tracing (SDK v4)**: `paddleocr` and `rag-mcp` send traces to `http://langfuse-web:3000`. SDK reads `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` from environment (set in compose via `.env` + per-service `LANGFUSE_HOST: http://langfuse-web:3000`).
-- `paddleocr/main.py` — one trace per OCR job using `_lf.start_as_current_observation()` with nested span for the tp42 backend call; uses Langfuse v4 OTel-based API (`get_client()`)
+**Langfuse tracing (SDK v4)**: `rag-mcp` sends traces to `http://langfuse-web:3000`. SDK reads `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` from environment (set in compose via `.env` + per-service `LANGFUSE_HOST: http://langfuse-web:3000`).
 - `web-tools-mcp/server.py` — `@observe(as_type="tool")` decorator on `web_search` and `crawl`; explicit input/output via `get_client().update_current_span()`
 
-To update the Langfuse project keys: edit `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` in `.env`, then `docker compose up -d paddleocr rag-mcp` (no rebuild needed).
+To update the Langfuse project keys: edit `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` in `.env`, then `docker compose up -d rag-mcp` (no rebuild needed).
 
 ### Health Monitoring (always on)
 - `ntfy` — self-hosted push notification server; port `${NTFY_PORT:-5555}`; data in named volume `ntfy_data`. Topics: `rag-stack` (Gatus health alerts), `rag-stack-updates` (WUD image update alerts). Subscribe via ntfy app at `https://{TS_HOSTNAME}.{TS_TAILNET}:5555`.
@@ -109,7 +102,7 @@ To update the Langfuse project keys: edit `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECR
 
 ### Tailscale VPN Access (profile: `tailscale`)
 - `tailscale` — VPN client; holds the TUN device and network namespace; state in named volume `tailscale_state`
-- `caddy` — reverse proxy via `network_mode: service:tailscale`; built from `caddy/Dockerfile` (includes Tailscale plugin); routes with HTTPS via `tls { get_certificate tailscale }`: `{TS_HOSTNAME}.{TS_TAILNET}` → RAGFlow, `:3000` → Langfuse, `:8010` → PaddleOCR, `:8090` → Gatus, `:5555` → ntfy; config in `caddy/Caddyfile`
+- `caddy` — reverse proxy via `network_mode: service:tailscale`; built from `caddy/Dockerfile` (includes Tailscale plugin); routes with HTTPS via `tls { get_certificate tailscale }`: `{TS_HOSTNAME}.{TS_TAILNET}` → RAGFlow, `:3000` → Langfuse, `:8090` → Gatus, `:5555` → ntfy; config in `caddy/Caddyfile`
 
 Requires `TS_AUTH_KEY`, `TS_HOSTNAME`, and `TS_TAILNET` in `.env`. Active profiles are set via `COMPOSE_PROFILES` in `.env`.
 
@@ -142,7 +135,7 @@ Key flags passed via the compose `command:` block:
 
 ## Vector Database Selection
 
-The `DOC_ENGINE` variable in `.env` selects the vector backend. Currently set to `infinity` (as of 2026-07-11; see the 2026-06-30 Infinity crash note below — this was reverted back to `infinity` after re-creating a clean data dir, not switched to Elasticsearch). Alternatives: `elasticsearch`, `oceanbase`, `opensearch`, `seekdb`. The corresponding compose profile must be active and the appropriate connection block in `service_conf.yaml.template` applies.
+The `DOC_ENGINE` variable in `.env` selects the vector backend. Currently set to `infinity` (as of 2026-07-12; see the Infinity crash notes below — recurred multiple times, most recently fixed by switching to a nightly build with the actual upstream fix, not just another wipe). Alternatives: `elasticsearch`, `oceanbase`, `opensearch`, `seekdb`. The corresponding compose profile must be active and the appropriate connection block in `service_conf.yaml.template` applies. **As of 2026-07-12, `infinity` is built from `./infinity-nightly-fix` (not a pinned `image:` tag)** — see below.
 
 ## Image Update Strategy (three-tier pinning)
 
@@ -234,6 +227,13 @@ RAGFLOW_API_KEY=ragflow-xxxx \
 `DOC_ENGINE=infinity` in `.env` selects Infinity as the vector backend. Config in `infinity_conf.toml` (version must match image tag, currently `v0.7.0`). Data persisted in `srv/stack/infinity/`.
 
 **2026-06-30 Infinity crash**: WAL replay aborted with `JsonTermT overflow: JSON index term exceeds JSON_TERM_MAX_LENGTH`, bringing the service down in a restart loop and breaking RAGFlow uploads. Fix was to stop the stack, back up `/srv/stack/infinity` (see `infinity.backup-20260630`), drop KB `manuals` (`bda8b8a873c211f1973ea923a4b850bd`) from MySQL (`knowledgebase`, `document`, `task`, `file2document`), and recreate an empty `srv/stack/infinity/`. Infinity now starts clean; re-ingest the manuals dataset manually once the underlying upstream bug is addressed.
+
+**Recurred again 2026-07-11 and 2026-07-12** (same `JsonTermT overflow` signature each time; see the fuller incident log on `main`/the real nuc25 checkout, condensed here): a full wipe-and-recreate of `srv/stack/infinity/` was needed each time (all live KBs' Infinity-side data lost), followed by re-queuing via `scripts/reparse-3kbs-post-infinity-wipe-20260711.py`.
+
+**2026-07-12 — actual upstream fix identified and deployed (not just another wipe)**: `v0.7.0` (still the latest tagged release) predates the real fix — commit `6fcc896` ("Use variable-length storage for JsonTermT", merged 2026-06-22) replaces `JsonTermT`'s fixed `char data_[512]` buffer with `std::string`, eliminating the whole `JSON_TERM_MAX_LENGTH` overflow class entirely. Not yet in a tagged release; only in the rolling `nightly` image.
+- **Nightly image has its own packaging bug**: `infiniflow/infinity:nightly-x64-v3`/`nightly-x64-v4` (CPU here supports AVX-512, so v4) fail immediately with `error while loading shared libraries: libatomic.so.1: cannot open shared object file` — the newly-compiled binary links against `libatomic` (unlike `v0.7.0`'s binary, confirmed via `ldd`) but the nightly image build never installs the `libatomic1` package. Worked around with a thin overlay Dockerfile (`nuc25.local/infinity-nightly-fix/Dockerfile`, `FROM infiniflow/infinity:nightly-x64-v4` + `apt-get install libatomic1`), wired into the compose file via `build: ./infinity-nightly-fix` replacing the old `image: infiniflow/infinity:v0.7.0` line. **Revert to a pinned `image:` tag once a real release ships with both the JsonTermT fix and a working image build** — this is a temporary, deliberately-unpinned-nightly workaround, a departure from the project's Tier-1 stateful-service pinning policy, justified only because the bug was actively data-destroying in production. The binary's internal version string is still `"0.7.0"` (release naming hasn't caught up to `main`), so `infinity_conf.toml`'s `version = "0.7.0"` needed no change.
+- Wiping root-owned `catalog/persistence/wal/log` subdirs needed a throwaway root container (no passwordless `sudo` on this host): `docker run --rm -v <path>:/target alpine sh -c "rm -rf ... && chown -R 1000:1000 ..."`.
+- **Not yet done**: no automated check exists to catch this recurring — Gatus's `/admin/node/current` check only fails after Infinity has already crashed. Consider whether `RestartCount` climbing is worth its own alert.
 
 To revert to Elasticsearch: set `DOC_ENGINE=elasticsearch` in `.env`, swap infinity for elasticsearch in the compose file, and add an Elasticsearch endpoint to Gatus. The old ES data in `srv/stack/elasticsearch/` was not deleted and can be reused. All previously indexed knowledge base documents must be re-parsed when switching backends — there is no cross-engine vector migration.
 

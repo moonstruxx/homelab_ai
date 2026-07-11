@@ -26,7 +26,7 @@ Work from the host subdirectory, not the repo root:
 | Host | Role | Managed via |
 |------|------|-------------|
 | `nuc25.local` | RAGFlow core, Langfuse observability, web scraping, health monitoring | Docker Compose |
-| `macstudio.local` | Embedding/rerank (Infinity), OCR inference (mlx-vlm/PaddleOCR-VL, proxied via nuc25 `paddleocr` container), speech-to-text (wyoming-whisper-cpp), Apple FoundationModels | launchd agents |
+| `macstudio.local` | Embedding/rerank (Infinity), PDF/OCR document parsing (mineru-api), img2txt VLM (unsloth studio), speech-to-text (wyoming-whisper-cpp), Apple FoundationModels | launchd agents |
 
 ## Standing Rules — Apply to All Hosts
 
@@ -75,7 +75,7 @@ All submodules are registered in the root `.gitmodules`:
 | `macstudio.local/anemll-server` | https://github.com/alexgusevski/anemll-server.git | macstudio |
 | `macstudio.local/apple-on-device-openai` | https://github.com/gety-ai/apple-on-device-openai.git | macstudio |
 | `macstudio.local/wyoming-whisper-cpp` | https://github.com/rhasspy/wyoming-whisper-cpp.git | macstudio |
-| `macstudio.local/mlx-vlm` | https://github.com/Blaizzy/mlx-vlm.git | macstudio (PaddleOCR-VL dependency) |
+| `macstudio.local/mlx-vlm` | https://github.com/Blaizzy/mlx-vlm.git | macstudio — **orphaned as of 2026-07-12**: was only a dependency of the now-retired vllm-metal/PaddleOCR-VL backend (see macstudio.local/CLAUDE.md); confirmed not installed in mineru-api's venv either. Not yet deinit'd/removed from `.gitmodules` — flagged for a decision, not acted on. |
 
 `nuc25.local/langfuse` is **not** a registered submodule — it's a plain nested git clone (own `.git`, remote `https://github.com/langfuse/langfuse.git`) checked out directly on nuc25. It doesn't show up in `git submodule status` or get pinned via `.gitmodules`; treat it the same as a submodule for update purposes (see below) but pull it directly with `git pull` inside `nuc25.local/langfuse/`, not via `git submodule update`.
 

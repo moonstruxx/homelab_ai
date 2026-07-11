@@ -54,7 +54,7 @@ echo "================"
 for entry in \
     "com.macaistack.infinity:infinity (embed/rerank)" \
     "com.macaistack.wyoming:wyoming (whisper STT)" \
-    "com.macaistack.vllm-paddle:vllm-paddle (PaddleOCR VLM)" \
+    "com.macaistack.mineru:mineru (PDF/OCR parsing)" \
     "com.macaistack.memory-health:memory-health (swap/mem)"; do
     label="${entry%%:*}"; name="${entry##*:}"
     state=$(launchd_state "${DOMAIN}/${label}")
@@ -101,7 +101,7 @@ ENDPOINTS=(
     "apple-on-device     |127.0.0.1:8080    |Login Item  |http://127.0.0.1:8080/health"
     "anemll-server       |127.0.0.1:8000    |manual      |http://127.0.0.1:8000/v1/models"
     "wyoming-whisper-cpp |127.0.0.1:10300   |launchd     |tcp"
-    "vllm-paddle         |192.168.1.114:8000|launchd     |http://192.168.1.114:8000/v1/models"
+    "mineru-api          |192.168.1.114:8086|launchd     |http://192.168.1.114:8086/health"
     "memory-health       |192.168.1.114:9101|launchd     |http://192.168.1.114:9101/health"
 )
 

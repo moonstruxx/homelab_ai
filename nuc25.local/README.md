@@ -7,7 +7,7 @@ Self-hosted RAG stack on **nuc25.local** — RAGFlow + Elasticsearch + Langfuse 
 | Host | Role |
 |------|------|
 | `nuc25.local` | RAGFlow core, Langfuse, web scraping — this repo |
-| `macstudio.local` | GPU/ANE services: Infinity (embed/rerank), apple-on-device-openai (Apple Intelligence, port 8080), vllm-metal (PaddleOCR inference), Wyoming Whisper |
+| `macstudio.local` | GPU/ANE services: Infinity (embed/rerank), apple-on-device-openai (Apple Intelligence), mineru-api (PDF/OCR parsing), Wyoming Whisper |
 
 ## Quick Start
 
@@ -33,12 +33,11 @@ docker compose -f $COMPOSE_FILE restart ragflow          # restart a service
 | http://nuc25.local:8088 | SearXNG | metasearch (`webscrape` profile) |
 | http://nuc25.local:11235 | spider-local | web crawler (`webscrape` profile) |
 | http://nuc25.local:11236 | rag-mcp | MCP web tools (`webscrape` profile) |
-| http://nuc25.local:8010 | PaddleOCR | OCR API (delegates to macstudio.local) |
 | http://nuc25.local:8090 | Gatus | health status page (localhost only) |
 | http://nuc25.local:5555 | ntfy | push notification server (localhost only) |
 | http://nuc25.local:3002 | WUD | image update monitor (localhost only) |
 
-Tailscale access (profile `tailscale`): `http://nuc25-rag.taildec1bd.ts.net` → RAGFlow, `:3000` → Langfuse, `:8010` → PaddleOCR.
+Tailscale access (profile `tailscale`): `http://nuc25-rag.taildec1bd.ts.net` → RAGFlow, `:3000` → Langfuse.
 
 ## Profiles
 

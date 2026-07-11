@@ -30,15 +30,6 @@ RAGFLOW_IMAGE=infiniflow/ragflow:latest
 
 Pin to a specific digest or tag here when testing a new release before promoting it.
 
-## PaddleOCR (macstudio inference)
-
-```
-PADDLEOCR_PORT=8010
-PADDLEOCR_VLLM_ENDPOINT=http://macstudio.local:8000/v1
-```
-
-`PADDLEOCR_VLLM_ENDPOINT` points to the vllm-metal server on macstudio.local. Update if the inference host or port changes.
-
 ## Tailscale VPN
 
 ```
@@ -69,7 +60,6 @@ SVR_HTTP_PORT=9380
 ADMIN_SVR_HTTP_PORT=9381
 SVR_MCP_PORT=9382
 MINIO_CONSOLE_PORT=9001
-PADDLEOCR_PORT=8010
 MCP_TOOLS_PORT=11236
 WUD_PORT=3002
 ```

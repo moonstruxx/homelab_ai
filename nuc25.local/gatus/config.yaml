@@ -130,16 +130,6 @@ endpoints:
     alerts:
       - type: ntfy
 
-  - name: PaddleOCR
-    group: "nuc25 — Observability"
-    url: "http://paddleocr:8000/health"
-    description: "PaddleOCR service | docker network: paddleocr:8000 | external: localhost:8003"
-    interval: 60s
-    conditions:
-      - "[STATUS] == 200"
-    alerts:
-      - type: ntfy
-
   # ── nuc25: Apps ───────────────────────────────────────────────────────────
 
   - name: Nextcloud

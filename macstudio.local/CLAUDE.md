@@ -18,7 +18,7 @@ This is a monorepo of git submodules, each providing a different AI inference se
 | `anemll-server` | Apple Neural Engine (CoreML) | 8000 | FastAPI server for ANE-optimized `.mlmodelc` models |
 | `infinity` | torch/MPS | 7997 | Embedding (`BAAI/bge-m3`) + rerank (`BAAI/bge-reranker-v2-m3`) |
 | `vllm-metal` | vLLM + MLX | configurable | vLLM plugin for Apple Silicon; MLX as primary compute backend |
-| `mlx-vlm` | MLX | — | MLX vision-language model library (used as vllm-metal dependency for PaddleOCR-VL) |
+| `mlx-vlm` | MLX | — | MLX vision-language model library — **orphaned as of 2026-07-12**, was only a dependency of the retired vllm-metal/PaddleOCR-VL backend below; not installed in mineru-api's venv |
 | `wyoming-whisper-cpp` | whisper.cpp | 10300 (Wyoming) | Speech-to-text bridge for Home Assistant voice pipelines |
 
 Non-submodule services (in `services/`):
@@ -177,7 +177,7 @@ curl http://localhost:8086/health                             # check status
 
 Previously, `vllm serve` (vllm-metal) served `PaddlePaddle/PaddleOCR-VL` on port 8000 as `com.macaistack.vllm-paddle`, consumed by the RAGFlow `paddleocr` container on nuc25.local. This was replaced by mineru-api above (nuc25's `tenant_model` DB table now has zero PaddleOCR entries — only `mineru-from-env` remains as the `ocr` model type; no knowledgebase's `layout_recognize` references PaddleOCR anymore). The launchd service and its run script were removed in the commit that added mineru-api, but the orphaned `com.macaistack.vllm-paddle.plist` (referencing the already-deleted `run-vllm-paddle.sh`) and this doc section were only cleaned up on 2026-07-11, well after the fact — if you find another stale `com.macaistack.*` artifact referencing a deleted script, this is the pattern: check `launchctl list` and the script's actual existence before trusting `services/*.plist` to reflect current reality.
 
-**The nuc25.local `paddleocr` proxy container is still defined in the compose stack** (builds from `nuc25.local/paddleocr/`, proxies to tp42.local:8080's native layout-parsing service — an entirely different PaddleOCR path, unrelated to vllm-metal) but as of 2026-07-11 is unused by any KB and was reporting `unhealthy` (tp42.local:8080 unreachable at the time). Whether to also remove that container/compose service/Gatus check, or keep it for a future KB that might want PaddleOCR-VL again, wasn't decided as part of this cleanup — see nuc25.local/CLAUDE.md.
+**The nuc25.local `paddleocr` proxy container** (built from `nuc25.local/paddleocr/`, proxied to tp42.local:8080's native layout-parsing service — an entirely different PaddleOCR path, unrelated to vllm-metal) was confirmed unused by any KB on 2026-07-11 and removed on 2026-07-12 — see nuc25.local/CLAUDE.md's "OCR" section for the full removal record.
 
 **Leftover disk usage**: `~/.venv-vllm-metal` (~1.7GB) is unused (no vllm process runs on this box anymore) but was left in place rather than deleted automatically — reclaim manually if wanted: `rm -rf ~/.venv-vllm-metal`. The vllm-metal *submodule* itself (`macstudio.local/vllm-metal`) is untouched — this only retires its use as the PaddleOCR-VL backend; it may still serve other models via `vllm serve` in the future using the memory-tuning knowledge below.
 
