@@ -149,21 +149,25 @@ All images are pinned to prevent surprise major-version upgrades. WUD (`http://n
 | Tier | Pin style | WUD label | Services |
 |------|-----------|-----------|----------|
 | 1 — Stateful | `MAJOR.MINOR` | `wud.tag.include` regex | `mysql:8.0`, `clickhouse:26.5` |
-| 2 — Application | `MAJOR` | `wud.watch.digest` | `langfuse:3`, `ragflow:latest` |
+| 2 — Application | `MAJOR.MINOR.PATCH` (exact) | `wud.tag.include` regex + `wud.watch.digest` | `langfuse:3.212.0`, `langfuse-worker:3.212.0`, `ragflow:v0.26.4` |
 | 3 — Infrastructure | `MAJOR` or named channel | `wud.watch.digest` | `valkey:8`, `redis:7`, `tailscale:stable` |
+
+RAGFlow and Langfuse were switched from floating tags (`ragflow:latest`, `langfuse:3`) to exact version pins on 2026-07-11, so upgrades are deliberate. `wud.tag.include` regexes (`^v0\.26\.\d+$` for RAGFlow, `^3\.\d+\.\d+$` for Langfuse) still let WUD flag new patch/minor releases inside the current line.
 
 **Upgrading a service:**
 
 1. Check WUD UI for what's available.
 2. For Tier 1 (stateful): check the changelog for breaking changes before bumping `MYSQL_VERSION` / `CLICKHOUSE_VERSION` / `STACK_VERSION` in `.env`.
-3. For Tier 2/3: `docker compose pull <service> && docker compose up -d <service>`.
-4. For DB major versions (MySQL 8→9, PG 17→18, ES 8→9): never do this automatically — follow the official migration guide.
+3. For Tier 2 (RAGFlow, Langfuse): bump `RAGFLOW_IMAGE` / `LANGFUSE_VERSION` in `.env` to the exact new version, then `docker compose pull <service> && docker compose up -d <service>`.
+4. For Tier 3: `docker compose pull <service> && docker compose up -d <service>`.
+5. For DB major versions (MySQL 8→9, PG 17→18, ES 8→9): never do this automatically — follow the official migration guide.
 
 **Pinned version env vars** (in `.env`):
 - `STACK_VERSION` — Elasticsearch
 - `POSTGRES_VERSION` — Langfuse Postgres
 - `CLICKHOUSE_VERSION` — Langfuse ClickHouse
-- `RAGFLOW_IMAGE` — RAGFlow (full image reference)
+- `LANGFUSE_VERSION` — Langfuse web + worker (exact `MAJOR.MINOR.PATCH`, e.g. `3.212.0`)
+- `RAGFLOW_IMAGE` — RAGFlow (full image reference, exact tag e.g. `infiniflow/ragflow:v0.26.4`)
 
 ## Integrating spider-local with RAGFlow
 

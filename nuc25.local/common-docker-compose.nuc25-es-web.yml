@@ -163,6 +163,7 @@ services:
       wud.watch: 'true'
       wud.display.name: RAGFlow
       wud.display.icon: mdi:robot
+      wud.tag.include: '^v0\.26\.\d+$'
       wud.watch.digest: 'true'
 
   paddleocr:
@@ -349,7 +350,7 @@ services:
     <<: *defaults
     profiles: ["langfuse"]
     networks: [ragflow, rag-data]
-    image: langfuse/langfuse-worker:3
+    image: langfuse/langfuse-worker:${LANGFUSE_VERSION:-3}
     depends_on:
       langfuse-postgres:
         condition: service_healthy
@@ -407,7 +408,7 @@ services:
     <<: *defaults
     profiles: ["langfuse"]
     networks: [ragflow, rag-data]
-    image: langfuse/langfuse:3
+    image: langfuse/langfuse:${LANGFUSE_VERSION:-3}
     depends_on:
       langfuse-postgres:
         condition: service_healthy
