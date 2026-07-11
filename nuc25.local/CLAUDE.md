@@ -169,6 +169,10 @@ RAGFlow and Langfuse were switched from floating tags (`ragflow:latest`, `langfu
 - `LANGFUSE_VERSION` — Langfuse web + worker (exact `MAJOR.MINOR.PATCH`, e.g. `3.212.0`)
 - `RAGFLOW_IMAGE` — RAGFlow (full image reference, exact tag e.g. `infiniflow/ragflow:v0.26.4`)
 
+**Version-alignment check (do this after every `git submodule update` on `ragflow`/`langfuse`, not just when bumping `.env` pins):**
+
+Pulling a submodule to mainline changes the *upstream* project's own `docker-compose.yml`/`docker/.env`, which can silently drift from what `common-docker-compose.nuc25-es-web.yml` + `.env` actually pin here. After any submodule pull, diff the sidecar images (`mysql`, `minio`, `redis`/valkey, `infinity` for ragflow; `postgres`, `clickhouse`, `redis`, `minio` for langfuse) between the submodule's compose file and this repo's `.env`/custom compose file, and confirm what's actually `docker exec ... --version` running matches. Deliberate deviations (e.g. `mysql:8.0` floating here vs. upstream's exact `mysql:8.0.39`, per the Tier 1 policy above) are fine — the point is to catch *accidental* drift, not to force exact parity.
+
 ## Integrating spider-local with RAGFlow
 
 | Goal | Approach |
