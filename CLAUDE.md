@@ -43,10 +43,7 @@ SSH to macstudio as `bjorn@macstudio.local` using key `~/.ssh/id_hetzner`.
 
 ### 2. Gatus health check for every new service on nuc25
 
-Every new service added to the nuc25 Docker Compose stack MUST get a Gatus health check in `nuc25.local/gatus/config.yaml`. The check must use a meaningful endpoint (not just `/` or a root that always returns 200). Verification procedure:
-- Confirm Gatus shows ❌ when the service is down (kill-test or start before the service is up)
-- Start the service and confirm Gatus transitions to ✅
-- Check via `curl -s http://localhost:8090/api/v1/endpoints/statuses` or the Gatus UI at port 8090
+Every new service added to the nuc25 Docker Compose stack MUST get a Gatus health check in `nuc25.local/gatus/config.yaml`. See the `gatus-health-check` skill for endpoint-selection rules and the required kill-test verification procedure.
 
 ## Cloning on Each Host
 
@@ -86,17 +83,4 @@ tp42's own clone of this monorepo has none of the submodules initialized (`git s
 
 ### Submodule / vendored-repo update procedure
 
-Do this whenever pulling a submodule (or `langfuse`) to mainline — not just when bumping an image tag in `.env`. Pulling upstream can silently invalidate two things this fleet depends on: version pins baked into compose files, and local patches applied on top of vendored source.
-
-1. **Fetch and check divergence before touching anything.** On the host where the repo is actually checked out:
-   ```bash
-   git fetch origin <default-branch>   # find default branch: git ls-remote --symref origin HEAD
-   git rev-list --count HEAD..origin/<branch>   # commits you're missing
-   git rev-list --count origin/<branch>..HEAD   # commits you have that upstream doesn't (should be 0 for a clean ff)
-   ```
-   If `origin/<branch>..HEAD` is non-zero, the pinned commit is off mainline (e.g. a topic-branch commit) — don't force-merge; leave it and note it.
-2. **Only fast-forward** (`git merge --ff-only origin/<branch>`) after confirming `git status --porcelain` is clean in that submodule. Never rebase/reset a submodule with local edits without checking first.
-3. **Check for compose/version-pin drift** — diff the vendored project's own compose file / `.env` example (e.g. `ragflow/docker/docker-compose-base.yml`, `langfuse/docker-compose.yml`) against what's actually pinned in the deployed stack (`nuc25.local/.env`, `nuc25.local/common-docker-compose.nuc25-es-web.yml`). Look specifically at the sidecar images that ship with the project (mysql/minio/redis/infinity for ragflow; postgres/clickhouse/redis/minio for langfuse) — see the "Version-alignment check" note in `nuc25.local/CLAUDE.md`. Most upstream commits won't touch these; when one does, decide deliberately whether to follow it (per the three-tier pinning policy) rather than picking it up silently.
-4. **Check for patch conflicts** — for `ragflow`, diff the pulled commit range against every file referenced in `nuc25.local/patches/` (see the `ragflow` service's `volumes:` block in `common-docker-compose.nuc25-es-web.yml` for the current list: `chat_model.py`, `paddleocr_parser.py`, `ocr_model.py`, `mineru_parser.py`, `utils.py`, the content-addressed web JS chunk). `git log --oneline <old>..<new> -- <path>` per file is enough — if empty, no conflict. Note: these patches only affect the *running* container when `RAGFLOW_IMAGE` itself is bumped (the container runs the published image tag, not this submodule) — a plain submodule pull without a `RAGFLOW_IMAGE` bump can't break them, it just changes the local reference copy used for diffing.
-5. **Flag (don't silently pull) anything that's actually load-bearing for a live service**, as opposed to a reference-only checkout. `ragflow`/`langfuse` submodule content is reference/config-template only — the live containers run pulled image tags, so a submodule pull here is low-risk and reversible. `vllm-metal`, `mlx-vlm`, `infinity` (macstudio) back actual launchd-run services from an editable install/build — pulling these changes what the *next restart* runs, even though it doesn't affect the currently-running process. Call out any pin that jumps a base-library version (e.g. a vLLM version bump) so it gets tested before the next restart, rather than assumed safe.
-6. **Leave the resulting submodule-pointer bump uncommitted** in the superproject unless asked to commit — `git submodule status` will show the new SHAs as modified; that's expected and lets the user review before committing.
+Do this whenever pulling a submodule (or `langfuse`) to mainline — not just when bumping an image tag in `.env`. Pulling upstream can silently invalidate two things this fleet depends on: version pins baked into compose files, and local patches applied on top of vendored source. See the `submodule-update` skill for the full procedure (divergence check, fast-forward-only rule, compose/version-pin drift check, patch-conflict check, and which repos are load-bearing vs. reference-only).
