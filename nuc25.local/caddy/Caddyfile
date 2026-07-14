@@ -15,13 +15,6 @@
     reverse_proxy langfuse-web:3000
 }
 
-{$TS_HOSTNAME}.{$TS_TAILNET}:8010 {
-    tls {
-        get_certificate tailscale
-    }
-    reverse_proxy paddleocr:8000
-}
-
 {$TS_HOSTNAME}.{$TS_TAILNET}:8090 {
     tls {
         get_certificate tailscale

@@ -18,7 +18,7 @@ This is a monorepo of git submodules, each providing a different AI inference se
 | `anemll-server` | Apple Neural Engine (CoreML) | 8000 | FastAPI server for ANE-optimized `.mlmodelc` models |
 | `infinity` | torch/MPS | 7997 | Embedding (`BAAI/bge-m3`) + rerank (`BAAI/bge-reranker-v2-m3`) |
 | `vllm-metal` | vLLM + MLX | configurable | vLLM plugin for Apple Silicon; MLX as primary compute backend |
-| `mlx-vlm` | MLX | — | MLX vision-language model library (used as vllm-metal dependency for PaddleOCR-VL) |
+| `mlx-vlm` | MLX | — | MLX vision-language model library — **orphaned as of 2026-07-12**, was only a dependency of the retired vllm-metal/PaddleOCR-VL backend below; not installed in mineru-api's venv |
 | `wyoming-whisper-cpp` | whisper.cpp | 10300 (Wyoming) | Speech-to-text bridge for Home Assistant voice pipelines |
 
 Non-submodule services (in `services/`):
@@ -159,28 +159,58 @@ DO_NOT_TRACK=1 TOKENIZERS_PARALLELISM=false \
   --host 192.168.1.114 --port 7997
 ```
 
-## vllm-metal (PaddleOCR backend)
+## mineru-api (PDF/OCR document parsing)
 
-vllm serve (vllm-metal) serving `PaddlePaddle/PaddleOCR-VL` (alias `PaddleOCR-VL-0.9B`) on `0.0.0.0:8000`. The RAGFlow paddleocr container on nuc25.local connects here as `http://macstudio.local:8000/v1` with model ID `PaddleOCR-VL-0.9B`.
+Serves MinerU's document-parsing API on `0.0.0.0:8086`, `hybrid-engine` backend (local Apple MPS inference). RAGFlow on nuc25.local routes PDF parsing here instead of PaddleOCR — see nuc25.local/CLAUDE.md's "MinerU Document Parsing" section for the RAGFlow-side integration (async `/tasks` endpoint + polling, backend config via `tenant_model_instance.api_key`).
 
-**Runs as the `com.macaistack.vllm-paddle` LaunchAgent** — auto-restarts on crash (`KeepAlive`).
+**Runs as the `com.macaistack.mineru` LaunchAgent** — auto-restarts on crash (`KeepAlive`).
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/com.macaistack.vllm-paddle   # restart
-tail -f ~/Library/Logs/macaistack-vllm-paddle.log                 # logs
-curl http://localhost:8000/health                                  # check status
+launchctl kickstart -k gui/$(id -u)/com.macaistack.mineru   # restart
+tail -f ~/Library/Logs/macaistack-mineru.log                 # logs
+curl http://localhost:8086/health                             # check status
 ```
 
-**Run script:** `services/run-vllm-paddle.sh` — invokes `vllm serve` with:
-- `--mm-processor-kwargs '{"max_pixels": 1503680}'` — caps vision-encoder input (limits prefill to ~2s for A4 pages at 150dpi).
-- **`VLLM_METAL_MEMORY_FRACTION=0.20`** (env var, exported in the run script) — **the only lever that bounds memory on this backend.** The vllm-metal/MLX **paged-attention** path sizes the KV pool as `metal_limit * VLLM_METAL_MEMORY_FRACTION` (default `auto`=0.90); the upstream `--gpu-memory-utilization` flag is **ignored** here. At 0.90 the pool is ~101GB / 5.49M tokens for a 0.9B model that uses ~0% of it → ~102GB resident, 96% RAM, swapping. 0.20 → ~20GB KV budget (~1.1M tokens, ~67x concurrency at 16K ctx), process footprint ~25GB — reclaims ~73GB. No OOM risk (model+overhead measured ~2.8GB; activations are bounded by the Metal `wired_limit`, not this fraction). Valid range `0 < f <= 1`.
-- `--max-model-len 16384` / `--max-num-seqs 16` — bound per-request context and scheduler batch; they only **re-slice** the same KV pool (concurrency 41.9x→335x at the *same* token count), they do **not** shrink it.
+**Run script:** `services/run-mineru.sh` — activates `~/.venv-mineru`, sets `MINERU_API_OUTPUT_ROOT=/tmp/mineru-output`, starts `mineru-api --host 0.0.0.0 --port 8086 --allow-public-http-client`. The script also exports `MINERU_SERVER_URL=http://192.168.1.114:13998` (comment claims this points at a `vmlx`-served Qwen3-VL instance) — nothing currently listens on port 13998; this appears to be a stale leftover from an earlier setup and its effect (if any) on the `hybrid-engine` backend is unconfirmed. Not yet investigated as of 2026-07-11.
 
-**Verify after restart:** grep the log for the `cache_policy.py … memory breakdown: … fraction=0.2 … kv_budget=… GB` line and run `footprint -p <EngineCore pid>` (`pgrep -f VLLM::EngineCore`) — `phys_footprint` should be ~25GB, not ~100GB. RSS undercounts Metal/`IOAccelerator` unified memory, so use `footprint`, not `ps`.
+### Retired: vllm-metal as PaddleOCR backend (removed 2026-07-11)
 
-Venv: `~/.venv-vllm-metal`.
+Previously, `vllm serve` (vllm-metal) served `PaddlePaddle/PaddleOCR-VL` on port 8000 as `com.macaistack.vllm-paddle`, consumed by the RAGFlow `paddleocr` container on nuc25.local. This was replaced by mineru-api above (nuc25's `tenant_model` DB table now has zero PaddleOCR entries — only `mineru-from-env` remains as the `ocr` model type; no knowledgebase's `layout_recognize` references PaddleOCR anymore). The launchd service and its run script were removed in the commit that added mineru-api, but the orphaned `com.macaistack.vllm-paddle.plist` (referencing the already-deleted `run-vllm-paddle.sh`) and this doc section were only cleaned up on 2026-07-11, well after the fact — if you find another stale `com.macaistack.*` artifact referencing a deleted script, this is the pattern: check `launchctl list` and the script's actual existence before trusting `services/*.plist` to reflect current reality.
 
-**Health endpoint:** `GET /health` → OpenAI-compatible liveness response.
+**The nuc25.local `paddleocr` proxy container** (built from `nuc25.local/paddleocr/`, proxied to tp42.local:8080's native layout-parsing service — an entirely different PaddleOCR path, unrelated to vllm-metal) was confirmed unused by any KB on 2026-07-11 and removed on 2026-07-12 — see nuc25.local/CLAUDE.md's "OCR" section for the full removal record.
+
+**Leftover disk usage**: `~/.venv-vllm-metal` (~1.7GB) is unused (no vllm process runs on this box anymore) but was left in place rather than deleted automatically — reclaim manually if wanted: `rm -rf ~/.venv-vllm-metal`. The vllm-metal *submodule* itself (`macstudio.local/vllm-metal`) is untouched — this only retires its use as the PaddleOCR-VL backend; it may still serve other models via `vllm serve` in the future using the memory-tuning knowledge below.
+
+**vllm-metal memory tuning (for future reference, if repurposed for another model)**: the vllm-metal/MLX **paged-attention** path sizes the KV pool as `metal_limit * VLLM_METAL_MEMORY_FRACTION` (default `auto`=0.90); the upstream `--gpu-memory-utilization` flag is **ignored** here. At 0.90 the pool was ~101GB / 5.49M tokens for the 0.9B PaddleOCR-VL model that used ~0% of it → ~102GB resident, 96% RAM, swapping. `VLLM_METAL_MEMORY_FRACTION=0.20` → ~20GB KV budget, process footprint ~25GB. Verify via `footprint -p <EngineCore pid>` (`pgrep -f VLLM::EngineCore`) — RSS undercounts Metal/`IOAccelerator` unified memory, so use `footprint`, not `ps`.
+
+## unsloth studio (img2txt VLM backend)
+
+Serves `Qwen3-VL-30B-A3B-Instruct-MLX-4bit` (vision-capable) on `0.0.0.0:8888`, OpenAI-compatible API. RAGFlow on nuc25.local uses it as the `img2txt_id` model (`Qwen3-VL-30B-A3B-Instruct-MLX-4bit@us@OpenAI-API-Compatible`, `tenant_model_instance` row for provider instance `us`, `api_key` JSON `{"base_url": "http://macstudio.local:8888/v1", ...}`) for image captioning during document parsing (dataflow's img2txt step — invoked for any embedded images, e.g. in DOCX/PDF documents with figures).
+
+**Not a managed launchd service** — started manually/interactively (`unsloth studio -H 0.0.0.0 -p 8888 --disable-tools`), no `KeepAlive`, no auto-restart on crash or hang. Also used ad-hoc for loading/testing other local models (gemma, etc.) throughout the day — expect the loaded model to change; check `GET /v1/models` (auth: `Authorization: Bearer <api_key from tenant_model_instance>`) before assuming Qwen3-VL is active.
+
+**Model must be explicitly loaded after every restart** — the server does not auto-load on startup. A restart without loading returns `400 {"error": {"message": "No model loaded. Call POST /inference/load first."}}` for every inference request (RAGFlow tasks see this as instant "Request timed out"/`Error code: 400` bursts). Load it:
+```bash
+curl -X POST -H "Authorization: Bearer <api_key>" -H "Content-Type: application/json" \
+  -d '{"model_path": "/ext/Modelle/lmstudio-community/Qwen3-VL-30B-A3B-Instruct-MLX-4bit"}' \
+  http://localhost:8888/v1/load
+```
+Verify with a real completion (not just `/v1/models`, which responds even mid-hang):
+```bash
+curl -H "Authorization: Bearer <api_key>" -H "Content-Type: application/json" \
+  -d '{"model":"Qwen3-VL-30B-A3B-Instruct-MLX-4bit","messages":[{"role":"user","content":"say hi"}],"max_tokens":5}' \
+  http://localhost:8888/v1/chat/completions
+```
+
+**2026-07-11 hang incident**: process ran fine for ~11h (loaded 09:58, serving normally) then went completely unresponsive at 21:33 — even `curl localhost:8888` *from macstudio itself* timed out. Server log (`~/.unsloth/studio/logs/server/server-<ts>-pid<pid>.log`) showed request latency climbing steadily right before the hang (200ms → 5s → 19.7s) with no error, then total silence — resource exhaustion, not a crash. `kill -TERM <pid>` shut it down cleanly (it also auto-cleaned an orphaned `llama-server` child process on the next startup). Symptom on the RAGFlow side: a document's parse task stuck retrying "Request timed out" every ~15-17s indefinitely (task never completed, never gave up) for as long as the hang lasted. **Fix**: `kill -TERM <pid>`, restart with the same command (`nohup ... &` + `disown` to survive SSH disconnect), reload the model via `/v1/load`, then re-queue any documents that failed out (see nuc25.local/CLAUDE.md's RAGFlow section for the single-document reparse pattern).
+
+**Gatus check** (`nuc25.local/gatus/config.yaml`, "Unsloth Studio (img2txt VLM)"): `GET /api/inference/status` (auth `Bearer ${UNSLOTH_API_KEY}`), conditions `[STATUS] == 200` and `[BODY].active_model == /ext/Modelle/lmstudio-community/Qwen3-VL-30B-A3B-Instruct-MLX-4bit`. Deliberately checks the loaded model, not just reachability, since a fresh restart returns 200 immediately but serves nothing useful until `/v1/load` is called (see above) — a bare root/reachability check wouldn't catch that state. Verified against the real 2026-07-11 incident retroactively (the prior bare-reachability check showed continuous `STATUS=0` failures for the whole ~2h hang, confirming this class of check does detect it) plus Gatus's already-proven `[BODY].<path> ==` condition mechanism (same pattern as the Nextcloud and memory-health checks in this config) — a live unload/reload kill-test to verify the *new* `active_model` condition specifically was proposed but paused per user request; still outstanding if you want full first-hand verification. **As of 2026-07-14 this condition is stale and permanently failing** — see the recurrence note below; the box is no longer running Qwen3-VL.
+
+**2026-07-14 hang recurrence, and drift discovered while fixing it**: Same hang signature as 2026-07-11 (`curl localhost:8888` from macstudio itself timed out on both `/v1/models` and `/api/inference/status`), surfaced as the `laws`/`droid` KB's dataflow img2txt step failing. `kill -TERM` on the studio process (PID varies per restart) also killed two unrelated in-flight children that happened to be running at the time: a `llama-server` serving a chat model and an `hf_download` worker mid-download of `unsloth/Qwen3.5-122B-A10B-MTP-GGUF` (both ad-hoc, interactive use, not RAGFlow-related — collateral damage of the restart, not caused by it). Restarted with the same command, reloaded a model, verified with a real `/v1/chat/completions` call (200 OK) before re-queuing RAGFlow documents.
+
+Two pieces of drift found in the process, neither introduced by this incident — both pre-existing, just not previously documented:
+1. **`tenant_model_instance` name is `uslo`, not `us`.** This doc (line 188) and the queued-task snapshots for some older/stuck tasks still say instance `us` — that row no longer exists. `RAGFlow → LookupError: Instance us not found` on any task holding a stale snapshot is this, not a new bug. Live instance name is `uslo`; update any manual DB patches or reasoning about `tenant_model_instance.api_key` to use `uslo`.
+2. **The tenant's current `img2txt_id` (`unsloth/Qwen3.6-27B-MTP-GGUF@uslo`) is not vision-capable** — `GET /api/inference/status` reports `"is_vision":false` for it despite a `--mmproj` flag on its launch command (that mmproj is for MTP speculative decoding, not vision). Every image-captioning call during parsing fails with `400 Image provided but current GGUF model does not support vision` — RAGFlow's dataflow treats this as non-fatal and skips captioning for that image, so document parsing still completes, just with blank/missing image descriptions. This means img2txt captioning has effectively been disabled fleet-wide since the tenant's img2txt_id was last changed away from a vision model (timing not established) — not something this restart caused, but restoring real image captions requires loading an actual vision-capable model (e.g. the original `Qwen3-VL-30B-A3B-Instruct-MLX-4bit`) via `/v1/load`, which conflicts with the ad-hoc interactive use of this box (see line 190). Left unresolved pending a decision on which model should be the standing img2txt default; Gatus's `active_model` condition (above) should be updated to match whatever that decision lands on.
 
 ## memory-health-server
 

@@ -18,7 +18,7 @@ Run all of this on the host where the repo is actually checked out (see the tabl
 | `macstudio.local/anemll-server` | https://github.com/alexgusevski/anemll-server.git | macstudio |
 | `macstudio.local/apple-on-device-openai` | https://github.com/gety-ai/apple-on-device-openai.git | macstudio |
 | `macstudio.local/wyoming-whisper-cpp` | https://github.com/rhasspy/wyoming-whisper-cpp.git | macstudio |
-| `macstudio.local/mlx-vlm` | https://github.com/Blaizzy/mlx-vlm.git | macstudio (PaddleOCR-VL dependency) |
+| `macstudio.local/mlx-vlm` | https://github.com/Blaizzy/mlx-vlm.git | macstudio — orphaned as of 2026-07-12, see root CLAUDE.md |
 
 ## 1. Fetch and check divergence before touching anything
 

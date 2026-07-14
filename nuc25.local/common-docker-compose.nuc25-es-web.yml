@@ -86,7 +86,14 @@ services:
   infinity:
     <<: *defaults
     networks: [rag-data]
-    image: infiniflow/infinity:v0.7.0
+    # TEMP 2026-07-12: v0.7.0 lacks the JsonTermT variable-length fix (upstream
+    # commit 6fcc896, merged 2026-06-22, not yet in a tagged release) that caused
+    # repeated crash-loops. Built from nightly-x64-v4 (has the fix) with libatomic1
+    # added -- the nightly image build is missing it, and the newly-compiled binary
+    # (unlike v0.7.0's) requires it. Revert to `image: infiniflow/infinity:vX.Y.Z`
+    # once a tagged release ships with both the fix and a working image build.
+    # See nuc25.local/CLAUDE.md's Infinity crash section.
+    build: ./infinity-nightly-fix
     command: ["-f", "/infinity_conf.toml"]
     volumes:
       - ./srv/stack/infinity:/var/infinity
@@ -109,7 +116,17 @@ services:
   ragflow:
     <<: *defaults
     networks: [ragflow, rag-data]
-    image: ${RAGFLOW_IMAGE}
+    # Built locally, not pulled: overlays a from-source frontend rebuild (adds the
+    # Cleanup pipeline node to the dataflow designer) on top of the pinned upstream
+    # image. Source lives on the `homelab/cleanup-node` branch in the ragflow
+    # submodule, based on the v0.26.4 tag. Context is the whole nuc25.local repo
+    # (not ./ragflow-cleanup) because the build needs both ragflow/web and
+    # ragflow/rag/flow/cleanup from the submodule. See ragflow-cleanup/Dockerfile.
+    build:
+      context: .
+      dockerfile: ragflow-cleanup/Dockerfile
+      args:
+        RAGFLOW_BASE_IMAGE: ${RAGFLOW_IMAGE}
     depends_on:
       mysql:
         condition: service_healthy
@@ -158,9 +175,18 @@ services:
       # Patch: transient connection errors (APIConnectionError) were classified as non-retryable,
       # so any LLM connection hiccup (e.g. local on-device model briefly overloaded under concurrent
       # parses) gave up instantly with zero backoff instead of retrying. Adds ERROR_CONNECTION to
-      # both _retryable_errors sets (Base and LiteLLMBase) so it uses the existing randomized
-      # 20-300s backoff (base_delay * uniform(10,150)) like rate-limit/server errors do.
+      # both _retryable_errors sets (Base and LiteLLMBase). Retry backoff is exponential: 500ms
+      # start, doubles every 2 attempts, capped at 2h; 29 retries total, ~6.55h accumulated wait
+      # before giving up (see nuc25.local/CLAUDE.md's "LLM Chat Model Patches" section).
       - ./patches/chat_model.py:/ragflow/rag/llm/chat_model.py:ro
+      # Patch: equivalent_condition_to_str()'s exists() helper asserted a queried column
+      # (e.g. compile_kwd, used by list_chunks' must_not filter) is present in the Infinity
+      # table schema. Fields never added to infinity_mapping.json (same class of bug as the
+      # documented "toc" column issue) blew the assertion, which callers swallow and turn into
+      # a silent empty-result "No valid tables found" — every chunk-browse call returned 0
+      # chunks fleet-wide even though the data existed. Missing columns now correctly treated
+      # as "false for every row" instead of asserting.
+      - ./patches/infinity_conn_base.py:/ragflow/common/doc_store/infinity_conn_base.py:ro
       - ./scripts/reclaim-tasks-on-startup.py:/ragflow/reclaim-tasks-on-startup.py:ro
     post_start:
       - command: ["python3", "/ragflow/reclaim-tasks-on-startup.py"]
@@ -171,25 +197,6 @@ services:
       wud.display.icon: mdi:robot
       wud.tag.include: '^v0\.26\.\d+$'
       wud.watch.digest: 'true'
-
-  paddleocr:
-    <<: *defaults
-    build: ./paddleocr
-    environment:
-      PADDLEOCR_BACKEND_URL: ${PADDLEOCR_BACKEND_URL:-http://tp42.local:8080}
-      PADDLEOCR_REQUEST_TIMEOUT: ${PADDLEOCR_REQUEST_TIMEOUT:-10800}
-      LANGFUSE_HOST: http://langfuse-web:3000
-    ports:
-      - 127.0.0.1:${PADDLEOCR_PORT:-8010}:8000
-    extra_hosts:
-      - "tp42.local:${TP42_IP:-192.168.1.169}"
-    healthcheck:
-      <<: *health_defaults
-      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
-    labels:
-      wud.watch: 'false'
-      wud.display.name: PaddleOCR Proxy
-      wud.display.icon: mdi:ocr
 
   searxng:
     <<: *defaults
@@ -594,6 +601,7 @@ services:
       - "0.0.0.0:${GATUS_PORT:-8090}:8080"
     environment:
       MACSTUDIO_IP: ${MACSTUDIO_IP:-192.168.1.114}
+      UNSLOTH_API_KEY: ${UNSLOTH_API_KEY}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
