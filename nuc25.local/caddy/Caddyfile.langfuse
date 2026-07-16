@@ -1,0 +1,6 @@
+{$TS_HOSTNAME}.{$TS_TAILNET} {
+    tls {
+        get_certificate tailscale
+    }
+    reverse_proxy langfuse-web:3000
+}

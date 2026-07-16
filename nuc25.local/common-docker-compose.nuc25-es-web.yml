@@ -179,6 +179,18 @@ services:
       # start, doubles every 2 attempts, capped at 2h; 29 retries total, ~6.55h accumulated wait
       # before giving up (see nuc25.local/CLAUDE.md's "LLM Chat Model Patches" section).
       - ./patches/chat_model.py:/ragflow/rag/llm/chat_model.py:ro
+      # Patch: the canvas "LLM" node, "Agent" node, and dataflow "Extractor" node all
+      # forwarded the node's structured-output self-correction retry count
+      # (ComponentParamBase.max_retries, defaults to 0) into LLMBundle's max_retries
+      # kwarg, silently overriding chat_model.py's patched default of 29 down to 0.
+      # Every connection error from these nodes gave up instantly with zero backoff,
+      # completely defeating the chat_model.py patch above for canvas/dataflow calls
+      # (confirmed via task_executor logs: 7,102 ConnectErrors/24h against
+      # macstudio.local:11537, zero "Retrying in..." lines). Fix just stops forwarding
+      # those two kwargs so LLMBundle falls back to the env-driven default.
+      - ./patches/agent_llm.py:/ragflow/agent/component/llm.py:ro
+      - ./patches/agent_with_tools.py:/ragflow/agent/component/agent_with_tools.py:ro
+      - ./patches/extractor.py:/ragflow/rag/flow/extractor/extractor.py:ro
       # Patch: equivalent_condition_to_str()'s exists() helper asserted a queried column
       # (e.g. compile_kwd, used by list_chunks' must_not filter) is present in the Infinity
       # table schema. Fields never added to infinity_mapping.json (same class of bug as the
@@ -532,6 +544,62 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     network_mode: service:tailscale
+
+  # Dedicated Tailscale node for langfuse-web, separate from the main stack's `tailscale`
+  # service above -- own tailnet identity/hostname, tagged `tag:langfuse` for independent
+  # ACL targeting. Mirrors the tailscale+caddy sidecar pattern used above; does not touch
+  # langfuse-web's own networking/config, purely additive.
+  langfuse-tailscale:
+    <<: *defaults
+    profiles: ["tailscale"]
+    image: tailscale/tailscale:stable
+    environment:
+      TS_HOSTNAME: ${LANGFUSE_TS_HOSTNAME:-langfuse}
+      TS_AUTH_KEY: ${LANGFUSE_TS_AUTH_KEY}
+      TS_EXTRA_ARGS: --advertise-tags=tag:langfuse
+      TS_STATE_DIR: /var/lib/tailscale
+    init: true
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - langfuse_tailscale_state:/var/lib/tailscale
+      - langfuse_tailscale_sock:/tmp
+    cap_add:
+      - NET_ADMIN
+    healthcheck:
+      test: ["CMD-SHELL", "tailscale status --peers=false --json | grep -q 'Online.*true'"]
+      start_period: 10s
+      interval: 5s
+      retries: 10
+    labels:
+      wud.watch: 'true'
+      wud.display.name: Langfuse Tailscale
+      wud.display.icon: si:tailscale
+      wud.watch.digest: 'true'
+
+  langfuse-caddy:
+    profiles: ["tailscale"]
+    build: ./caddy
+    restart: unless-stopped
+    env_file:
+      - .env
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    depends_on:
+      langfuse-tailscale:
+        condition: service_healthy
+    environment:
+      TS_HOSTNAME: ${LANGFUSE_TS_HOSTNAME:-langfuse}
+      TS_TAILNET: ${TS_TAILNET}
+    volumes:
+      - ./caddy/Caddyfile.langfuse:/etc/caddy/Caddyfile:ro
+      - langfuse_tailscale_sock:/var/run/tailscale
+      - langfuse_caddy_data:/data
+      - langfuse_caddy_config:/config
+    network_mode: service:langfuse-tailscale
     labels:
       wud.watch: 'false'  # local build, not on Docker Hub
       wud.display.name: Caddy
@@ -629,5 +697,9 @@ volumes:
   tailscale_sock:
   caddy_data:
   caddy_config:
+  langfuse_tailscale_state:
+  langfuse_tailscale_sock:
+  langfuse_caddy_data:
+  langfuse_caddy_config:
   wud_data:
   ntfy_data:
