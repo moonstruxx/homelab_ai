@@ -70,7 +70,7 @@ services:
     <<: *defaults
     networks: [rag-data]
     image: valkey/valkey:8
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}", "--maxmemory", "1gb", "--maxmemory-policy", "allkeys-lru"]
     # No host publish: only ragflow uses Redis, over the internal rag-data network.
     volumes:
       - ./srv/stack/redis:/data
