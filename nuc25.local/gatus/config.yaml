@@ -251,3 +251,8 @@ endpoints:
       - "[CONNECTED] == true"
     alerts:
       - type: ntfy
+
+  - name: Daytona Bridge
+    endpoint: http://daytona-bridge:8000/health
+    interval: 30s
+    retry_on_failure: true

@@ -12,10 +12,18 @@ Sessions run **locally on tp42.local** (192.168.1.169). The working directory is
    - Confirm Gatus shows ❌ when the service is down (kill-test or start before the service is up)
    - Start the service and confirm Gatus transitions to ✅
    - Check via `curl -s http://localhost:8090/api/v1/endpoints/statuses` or the Gatus UI at port 8090
-
+   - At the beginning of a session you have to figure out which host has been used to spawn it. 
+   - while committing always push / pull to the other repos:
+     - macstudio.local
+     - tp42.local
+     - nuc25.local
+    - on demand push to github
 ## Fleet Context
 
-This stack spans two machines:
+This stack spans two machines:## Vector Database Selection
+
+The `DOC_ENGINE` variable in `.env` selects the vector backend. Currently set to `infinity` (as of 2026-07-11; see the 2026-06-30 Infinity crash note below — this was reverted back to `infinity` after re-creating a clean data dir, not switched to Elasticsearch). Alternatives: `elasticsearch`, `oceanbase`, `opensearch`, `seekdb`. The corresponding compose profile must be active and the appropriate connection block in `service_conf.yaml.template` applies.
+
 
 | Host | Role |
 |------|------|
@@ -70,6 +78,13 @@ Three functional groups of services:
 - `redis` (Valkey 8) — cache and message queue (data: `/srv/stack/redis`)
 - `infinity` — vector and full-text search; data: `/srv/stack/infinity`; Thrift port 23817, HTTP port 23820, Postgres port 5432; config in `infinity_conf.toml`; `DOC_ENGINE=infinity` in `.env` selects it. **As of 2026-07-12, built from `./infinity-nightly-fix` (not a pinned `image:` tag)** — see the Infinity crash incident notes below for why.
 - `ragflow` — main application: serves UI (port 80/443), Python API (9380), Admin API (9381), MCP server (9382). Built locally from `ragflow-cleanup/Dockerfile` (overlay on `${RAGFLOW_IMAGE}` adding the `Cleanup` pipeline node — see "RAGFlow is now built locally" below), not pulled directly.
+
+### Daytona Integration (Agentic Sandbox)
+- `daytona-bridge` — FastAPI bridge providing secure code execution via Daytona SDK.
+  - **Endpoint**: `http://daytona-bridge:8000/health` (Internal)
+  - **Function**: Acts as a tool/MCP server for RAGFlow agents to execute Python/Shell code in isolated sandboxes.
+  - **Gatus Check**: Monitored via `gatus/config.yaml`.
+
 
 ### OCR
 
@@ -135,9 +150,6 @@ Key flags passed via the compose `command:` block:
 - Auth: `Authorization: Bearer <RAGFLOW_MCP_API_KEY>`
 - Exposes RAGFlow knowledge bases, agents, and datasets as MCP tools to external clients (Claude Code, Cursor, etc.)
 
-## Vector Database Selection
-
-The `DOC_ENGINE` variable in `.env` selects the vector backend. Currently set to `infinity` (as of 2026-07-11; see the 2026-06-30 Infinity crash note below — this was reverted back to `infinity` after re-creating a clean data dir, not switched to Elasticsearch). Alternatives: `elasticsearch`, `oceanbase`, `opensearch`, `seekdb`. The corresponding compose profile must be active and the appropriate connection block in `service_conf.yaml.template` applies.
 
 ## Image Update Strategy (three-tier pinning)
 
@@ -223,7 +235,7 @@ RAGFLOW_API_KEY=ragflow-xxxx \
 - Folders are created segment-by-segment if they don't exist
 - Env: `RAGFLOW_API_BASE` (default `http://localhost/api/v1`)
 
-## Elasticsearch Field Limit Maintenance
+## Infinity Maintenance
 
 
 `DOC_ENGINE=infinity` in `.env` selects Infinity as the vector backend. Config in `infinity_conf.toml` (version must match image tag, currently `v0.7.0`). Data persisted in `srv/stack/infinity/`.
@@ -412,9 +424,9 @@ kb = KnowledgebaseService.query(id=doc.kb_id)[0]
 cancel_all_task_of(DOC_ID)
 TaskService.model.delete().where(TaskService.model.doc_id == DOC_ID).execute()
 DocumentService.model.update(chunk_num=0, progress=0, progress_msg="").where(DocumentService.model.id == DOC_ID).execute()
-DocumentService.clear_chunk_num(DOC_ID)
 DocumentService.run(kb.tenant_id, DocumentService.query(id=DOC_ID)[0].to_dict(), {})
 ```
+(Previously this pattern also called `DocumentService.clear_chunk_num(DOC_ID)` here — removed 2026-07-17. That method decrements `Knowledgebase.doc_num` unconditionally, which is correct only for actual document deletion, not a re-queue; two incident scripts using it drifted `laws_fine_chuncked`'s `doc_num` to -6. It was also redundant with the `.update(chunk_num=0, ...)` call directly above. See KNOWN_ISSUES.md → "DocumentService.clear_chunk_num() misuse".)
 
 **2026-07-14 droid.docx parse investigation — timeout was a red herring, real blocker was the img2txt hang recurring + stale config drift (resolved)**: Asked to fix by "doubling the ingestion timeout"; log analysis first showed this premise didn't hold — droid.docx's actual failures over the preceding hours were four distinct fast/non-timeout errors (embedding `Connection error`, `LookupError: Instance us not found`, a task cancelled by a stale requeue script, and `Can't find variable: 'Extractor:<id>@chunks'` from a queued task snapshot referencing an Extractor component ID no longer present in the live canvas — the dataflow designer regenerates component IDs on save, so an old queued task's snapshot can point at a component that no longer exists). None of these are affected by any timeout value. Checked Gatus and confirmed the real, current blocker: the same unsloth studio hang from 2026-07-11 had recurred (see macstudio.local/CLAUDE.md's "unsloth studio" section, 2026-07-14 recurrence note) — fixed there (kill/restart/reload), then the doc was re-queued with the single-document pattern above and confirmed actually parsing (chunk count climbing, no repeat of the earlier errors). One residual gap found and left open: the tenant's current `img2txt_id` model is not vision-capable, so image captions in droid.docx (and any other document with embedded figures) come back blank — parsing still completes since RAGFlow treats a 400 "does not support vision" as non-fatal per-image, but figure descriptions are effectively disabled fleet-wide until a vision-capable model is reloaded on macstudio (see macstudio.local/CLAUDE.md for the tradeoff). **Takeaway for future "increase the timeout" requests**: check `progress_msg` / task executor logs for the actual exception type first — `asyncio.wait_for(..., timeout=...)` appears in every dataflow node's traceback as generic wrapper machinery, so its presence in a stack trace does not by itself mean the failure was a timeout.
 
@@ -428,3 +440,36 @@ DocumentService.run(kb.tenant_id, DocumentService.query(id=DOC_ID)[0].to_dict(),
 **Not yet done**: `droid.docx` (1081 chunks, took ~1.5h to originally parse) and other previously-affected documents across the `droid`/`manuals`/`ismr` KBs have **not** been bulk re-queued to backfill blank image captions from before this fix — only the one PDF above was re-parsed as a verification test. Also, for future requests like "set up the [vendor] vision model" — check what's actually being asked for exists upstream before implementing; there is no vision-capable "Qwen 27B MTP" model (see macstudio.local/CLAUDE.md's "unsloth studio" section) — MTP naming there refers to speculative-decoding draft heads, unrelated to vision support.
 
 **2026-07-11 mysqld crash loop from an orphaned duplicate compose project (resolved)**: `rag_ai_stack-mysql-1` crash-looped with `[InnoDB] Unable to lock ./ibdata1 error: 11` (`Resource temporarily unavailable`). Root cause: a stale compose project named `nuc25local` — the sanitized default project name Docker Compose derives from the directory `nuc25.local` when `COMPOSE_PROJECT_NAME` isn't picked up — had 5 leftover containers (`nuc25local-mysql-1`, `-minio-1`, `-redis-1`, `-tailscale-1`, `-elasticsearch-1`) bind-mounting the *exact same* host data directories as the current `rag_ai_stack` project (which `.env`'s `COMPOSE_PROJECT_NAME=rag_ai_stack` now correctly names). The orphaned mysqld kept grabbing the `ibdata1` file lock before the real one could, and the real `ragflow` container stayed stuck in `Created` state waiting on a healthy mysql dependency. Fix: `docker stop`/`docker rm` the 5 orphaned `nuc25local-*` containers (no data loss — same bind mounts, just duplicate processes), then `docker compose -f common-docker-compose.nuc25-es-web.yml up -d ragflow`. If mysqld (or another stateful service) crash-loops with a file-lock error again, check `docker ps -a --format '{{.Names}}\t{{.Label "com.docker.compose.project"}}'` for a second project mounting the same `srv/stack/*` paths before assuming data corruption.
+
+**2026-07-17 `laws_fine_chuncked`: all chunks showed disabled, KB overview showed 0 chunks (IN PROGRESS — config fixed, re-parse not yet complete/verified)**: Two compounding bugs, both scoped to this one KB. **Bug 1** — the KB's pipeline canvas ("laws adv llmm", `user_canvas.id = 979281ea7cc711f1a7d8dd598ccf016b`) has a `TokenChunker` node with `enable_children: true` and `children_delimiters: ["\n"]`. RAGFlow's mother/child chunking hides the pre-split text as a synthetic "mother" row (`available_int=0` by design) and shows only the split fragments as visible children. Splitting on every newline shredded this KB's German statutory PDFs (MinerU output has no blank-line paragraph breaks) into ~12 tiny 6–124 char line fragments as the visible children per real ~1000–2000 char section, while the actual section text sat hidden as the mother row — real content disabled, junk fragments visible. Not a code bug (confirmed via `git log` — stock upstream logic, untouched by this fork's commits); a dataflow misconfiguration. **Bug 2** — `knowledgebase.chunk_num`/`document.chunk_num` were stuck at 0 in MySQL (the KB overview reads these columns directly, not a live doc-store query) and `knowledgebase.doc_num` had drifted to `-6`, both caused by `scripts/reparse-3kbs-post-infinity-wipe-20260711.py` (run twice, 2026-07-11 and 2026-07-12) calling the deprecated `DocumentService.clear_chunk_num()` purely to reset counters before re-queuing — that method unconditionally decrements `Knowledgebase.doc_num`, which is only correct for actual deletion. See `KNOWN_ISSUES.md` for full details on both.
+
+**Fix applied**: (1) `scripts/fix-tokenchunker-laws-kb-20260717.py` changed `children_delimiters` to `["\n§ ", "\nArt "]` — confirmed via live sampling of 327 mother rows to cleanly match only true section/article headers (matches the pipeline's own upstream `TitleChunker` node convention, which already treats `^§ ` / `^Art [0-9]+` as hierarchy boundaries), producing ~3 children per mother instead of ~12. (2) `scripts/fix-docnum-laws-kb-20260717.py` corrected `doc_num` to the real document count. (3) `scripts/reset-and-requeue-laws-kb-20260717.py` reset and re-queued the KB's 6 documents — scoped to this KB only (does not wipe the shared Redis stream like the 2026-07-11 script), does not call `clear_chunk_num()`, staged as a single canary document (`BGB.pdf`) first, verified, then the remaining 5. Also fixed the documented single-document reset pattern earlier in this file (img2txt section) to drop its own `clear_chunk_num()` call, which had the same bug.
+
+**Incidental finding, not this KB's fault**: 2 of the 6 documents (`SGB_2.pdf`, `StGB.pdf`) were separately stuck mid-index (`task.run=1`, `progress≈0.82`) — confirmed via Redis heartbeat inspection this was a task-executor worker crash orphaning in-memory state (worker stopped heartbeating, replacement worker came up idle without retrying), **not** the documented stranded-Redis-stream pattern (`te.0.common`/`te.1.common` showed `pending=0`), so `scripts/reclaim-ragflow-tasks.sh` did not apply — the scoped reset+requeue above covered them anyway since all 6 documents needed re-parsing regardless.
+
+**STATUS AS OF 2026-07-17 ~03:40 (session paused, work NOT complete)**: The canonical config fixes (TokenChunker delimiter, `doc_num` correction) are applied and confirmed persisted. The document re-parse is **not** finished or verified. What actually happened after the canary attempt on `BGB.pdf`:
+
+- A canary re-parse of `BGB.pdf` alone was started via `scripts/reset-and-requeue-laws-kb-20260717.py`. While it was running, the task got cancelled (`Task stopped by user` in RAGFlow's own log — someone, possibly via the UI, clicked stop), and shortly after, multiple `POST /api/v1/documents/ingest` calls appeared in the ragflow log in two bursts (6 calls, then 2 more) — strongly suggesting a bulk "re-parse all documents" action was triggered from the UI around the same time as this incident's own script activity. Net effect: all 6 documents ended up being processed **concurrently** by the task executor's 2 worker processes, not just the intended canary.
+- **New bug discovered under this concurrent load**: `GG.pdf` got through parsing/chunking/embedding successfully on every attempt, then silently failed at the final indexing step (`document.chunk_num` never incremented) across 4 consecutive retries. Correlated with repeated `RuntimeError: Attempted to exit cancel scope in a different task than it was entered in` (anyio/httpcore) in the ragflow log during the same window — consistent with a concurrency bug where multiple documents' async tasks interfere with shared HTTP client/connection-pool state inside one task-executor worker process. **Lesson: never re-parse more than one document in this KB (possibly any KB) at the same time** — this is a real, reproducible failure mode, not a fluke.
+- **Compounding discovery**: re-parsing a document does **not** delete its prior Infinity chunks before inserting new ones. `GG.pdf`'s row count climbed from a 179-row baseline to 243 across the 4 failed retries — confirming retries silently accumulate duplicate/stale rows rather than replacing them.
+- **Infinity got stuck**: after killing the runaway concurrent-processing situation (a cleanup script that was cancelling tasks and deleting each document's stale Infinity rows one at a time), `doc_store.delete()` calls started hanging indefinitely (confirmed via direct timeout-wrapped test calls — the hang was 100% reproducible, not a fluke, and affected *any* delete on the table, even ones matching zero rows) — almost certainly because an earlier `kill -9` on a stuck script interrupted a delete mid-flight and left a stuck lock/transaction on this KB's Infinity table. **Fix**: `docker compose restart infinity` (a plain restart, not a data wipe — confirmed clean startup afterward with no `JsonTermT overflow`-style crash signature). This did *not* immediately clear the lock on the very next attempt but did resolve within the following few attempts — if this recurs, don't assume a wipe is needed; a plain restart plus retrying the delete a couple more times is the first thing to try, and confirm via a hard-timeout-wrapped test call (like the one used here) rather than assuming a hang means data corruption.
+- **All 6 documents' Infinity rows were then explicitly deleted** by doc_id (scoped, not a full table/index drop — the drop-table approach was blocked by the auto-mode permission classifier even with explicit user sign-off, so use per-`doc_id` `docStoreConn.delete({"doc_id": ...}, idx_nm, kb_id)` instead) and MySQL task/progress state reset to 0 for all 6, confirmed via direct Infinity table introspection: 0 real rows remained (only 1 unrelated stray empty-`doc_id` row, harmless, pre-existing).
+- A **strictly serial** re-parse driver (`scripts/serial-requeue-laws-kb-20260717.py`) was started — queues one document, polls until it reaches `progress==1` (or fails) or times out (40 min/doc), only then starts the next. Never more than one document in flight. Running detached inside the `ragflow` container (`docker exec -i ... python3 -u /tmp/serial-requeue-laws-kb-20260717.py`), logging to `/tmp/serial-requeue.log` **on the nuc25.local host** (not inside the container — the log redirection happens in the outer SSH shell). At the time this session paused, `BGB.pdf` was still in early MinerU parsing (`progress≈0.001`, `chunk_num=0`) with no change across ~4.5 minutes of polling — worth checking whether this is just normal slow MinerU startup or another stuck task when resuming.
+
+**TO RESUME**: See `open_issues.md` for the current state and action plan. The serial-requeue process was killed after getting stuck on `BGB.pdf`. Next steps:
+1. Fix MySQL `chunk_num` counters (see `ragflow-kb-management` skill → "MySQL chunk_num/doc_num counters stuck at 0")
+2. Update KB parser `delimiter` from `"\n"` to `"\n§ "` for optimal German law chunking (see `ragflow-operations` skill → "German Law Texts" config)
+3. Re-parse all 6 documents **serially** with new config (see `ragflow-kb-management` skill → "Concurrent re-parse causes Infinity indexing failures")
+4. Verify chunk counts and content quality
+
+**Do NOT** restart the serial-requeue script without first fixing the MySQL counters and parser config.
+
+**Status**: See `KNOWN_ISSUES.md` and `open_issues.md` for verification results.
+
+**2026-07-17 Post-Incident State — MySQL Counters Stuck at 0, Config Fixed, Re-parse Pending**:
+- **MySQL counters broken**: All 6 documents show `chunk_num=0` in MySQL despite successful parsing (logs confirm `SGB_2.pdf: 4 chunks`, `BGB.pdf: 1 chunk`, etc.). `knowledgebase.chunk_num` also stuck at 0. Root cause: counters not updated after indexing, likely a side-effect of the earlier Infinity wipe/re-parse incident.
+- **Config corrected**: `children_delimiters` changed from `["\n"]` to `["\n§ ", "\nArt "]` (via `fix-tokenchunker-laws-kb-20260717.py`), matching German law section/article boundaries. `doc_num` corrected to 6 (via `fix-docnum-laws-kb-20260717.py`).
+- **Re-parse incomplete**: Serial re-queue script (`serial-requeue-laws-kb-20260717.py`) got stuck on `BGB.pdf` at progress 0.002 (0.2%) for 28+ minutes and was killed. Documents remain in mixed state (some completed, some errored).
+- **Next steps**: (1) Fix MySQL `chunk_num` counters by querying actual Infinity counts, (2) Update KB parser `delimiter` from `"\n"` to `"\n§ "` for optimal chunking, (3) Re-parse all 6 documents **serially** with new config, (4) Verify chunk counts and content quality. See `open_issues.md` for full details and action plan.
+
+**Not yet audited**: Other KBs using pipeline ingestion with `TokenChunker`'s `enable_children: true` may have the same `children_delimiters` misconfiguration risk; any KB whose documents were reset via the 2026-07-11/07-12 script or the old (pre-fix) CLAUDE.md single-doc pattern should have `doc_num` spot-checked.

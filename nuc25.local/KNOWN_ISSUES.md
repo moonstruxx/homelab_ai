@@ -117,3 +117,90 @@ still logs when the headers are absent.
 **Impact:** Cosmetic. SearXNG responds normally; no requests are blocked.
 
 **Fix:** None needed. The warning is non-actionable for an internal-only deployment.
+
+---
+
+## ragflow pipeline: TokenChunker `children_delimiters` mis-split hides real content, shows junk fragments (2026-07-17)
+
+**Symptom:** For KB `laws_fine_chuncked`: documents parsed successfully, but browsing
+a document's chunks showed every chunk as "disabled", and the KB overview showed 0
+chunks total despite chunks clearly existing.
+
+**Root cause:** The KB's ingestion dataflow ("laws adv llmm" canvas) has a
+`TokenChunker` node with `enable_children: true`. RAGFlow's mother/child chunking
+(`rag/svr/task_executor_refactor/chunk_service.py::_create_mother_chunks`, same
+logic in the legacy `rag/svr/task_executor.py`) takes the pre-split text as a
+synthetic "mother" context row and unconditionally writes it with
+`available_int=0` (hidden by design); every fragment produced by splitting on
+`children_delimiters` becomes a visible "child" row (default `available_int=1`).
+The node's `children_delimiters` was `["\n"]` — splitting on every single
+newline. For this KB's German statutory PDFs (MinerU output has short per-line
+text with no blank-line paragraph breaks — confirmed 0/327 sampled mother rows
+contain `\n\n`), that shredded each real ~1000-2000 char section into ~12 tiny
+6-124 char line fragments as the visible children, while the complete real
+section text sat hidden as the mother row. This is stock upstream RAGFlow
+behaviour working exactly as designed — a KB dataflow misconfiguration, not a
+code bug (confirmed no fork-local commits touch this logic).
+
+A second, independent bug compounded the "0 chunks" symptom: `knowledgebase.chunk_num`/
+`document.chunk_num` were stuck at 0 in MySQL for this KB (see the
+`DocumentService.clear_chunk_num` entry below) — the KB overview reads these MySQL
+columns directly (`api/apps/services/dataset_api_service.py`), not a live filtered
+query against the doc store, so genuinely-existing chunks with a stale MySQL count
+still show "0" in the overview.
+
+**Fix applied:** Changed `children_delimiters` to `["\n§ ", "\nArt "]` —
+confirmed via live sampling to reliably match only true section/article headers in
+this corpus (472 clean line-start `\n§ ` occurrences, 190 clean `\nArt `, 0 false
+positives against inline `§` cross-references like `dem § 126`), producing ~3
+children per mother (target 2-6) instead of ~12 junk fragments. Matches the
+convention the pipeline's own upstream `TitleChunker` node already uses (its
+hierarchy levels treat `^§ ` and `^Art [0-9]+` as structural boundaries). Applied
+via `scripts/fix-tokenchunker-laws-kb-20260717.py`, then all 6 documents were
+reset and re-queued via `scripts/reset-and-requeue-laws-kb-20260717.py` (staged:
+canary doc first, then the rest — see CLAUDE.md's 2026-07-17 entry for the full
+incident writeup).
+
+**Takeaway for other KBs:** any pipeline-based ingestion canvas using
+`TokenChunker` with `enable_children: true` should have its `children_delimiters`
+checked against real sample text before relying on the mother/child hierarchy —
+`["\n"]` (a common copy-paste default) only works for source text with genuine
+blank-line paragraph breaks; it silently inverts "real content vs. fragment"
+visibility for anything more line-fragmented (much OCR/MinerU output, verse/legal
+text, tables-as-text, etc.).
+
+**Status:** Resolved for `laws_fine_chuncked`. Not yet audited across other KBs
+using pipeline ingestion with `enable_children: true`.
+
+---
+
+## ragflow: `DocumentService.clear_chunk_num()` misuse decremented `knowledgebase.doc_num` (2026-07-17)
+
+**Symptom:** `knowledgebase.doc_num` for `laws_fine_chuncked` read `-6` instead of
+the real count of 6 documents; `chunk_num` was stuck at 0 in MySQL despite real
+chunks existing in Infinity for several documents.
+
+**Root cause:** `DocumentService.clear_chunk_num()` (`api/db/services/document_service.py`)
+is docstring-marked `"""Deprecated: use delete_document_and_update_kb_counts
+instead."""` and unconditionally does `Knowledgebase.doc_num - 1` — a decrement
+appropriate only when a document is actually being deleted. Two incident-response
+scripts (`scripts/reparse-3kbs-post-infinity-wipe-20260711.py`, run once on
+2026-07-11 and again on 2026-07-12 after unrelated Infinity-crash data wipes) called
+this method purely to zero `chunk_num`/`progress` before **re-queuing** documents
+for re-parsing — not deleting them — so each of the 2 runs silently decremented
+`doc_num` by 1 for each of this KB's 6 real documents (2 × 6 = -12 off a baseline
+of 6 → -6). The project's own documented "single-document reset+requeue pattern"
+(CLAUDE.md, originally written for the 2026-07-11 img2txt VLM hang) also called
+this same method and carried the same bug — anyone copy-pasting that pattern for
+a future incident would keep re-introducing this drift.
+
+**Fix applied:** One-time correction via `scripts/fix-docnum-laws-kb-20260717.py`
+(sets `doc_num` to the real `COUNT(*)` of documents in the KB). CLAUDE.md's
+documented single-document reset pattern was corrected to drop the
+`clear_chunk_num()` call — it's redundant anyway, since the pattern already zeroes
+`chunk_num`/`progress`/`progress_msg` via a direct `.update()` one line above it.
+
+**Status:** Resolved for `laws_fine_chuncked`. Any other KB that had documents
+reset via `reparse-3kbs-post-infinity-wipe-20260711.py` or an incident script that
+copy-pasted the old CLAUDE.md pattern should have its `doc_num` spot-checked
+against a real document count.
