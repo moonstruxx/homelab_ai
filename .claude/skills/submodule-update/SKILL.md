@@ -5,14 +5,14 @@ description: Use whenever updating, pulling, bumping, or syncing a submodule or 
 
 # Submodule / vendored-repo update procedure
 
-Pulling a submodule upstream can silently invalidate two things this fleet depends on: version pins baked into compose files, and local patches applied on top of vendored source. Do this full procedure any time you pull a submodule (or `langfuse`, which is a plain nested git clone, not a registered submodule) to mainline — not just when bumping an image tag in `.env`.
+Pulling a submodule upstream can silently invalidate two things this fleet depends on: version pins baked into compose files, and local patches applied on top of vendored source. Do this full procedure any time you pull a submodule to mainline — not just when bumping an image tag in `.env`.
 
 Run all of this on the host where the repo is actually checked out (see the table below) — not on tp42, which has no submodule content initialized.
 
 | Path | Upstream | Initialized on |
 |------|----------|-----------------|
 | `nuc25.local/ragflow` | https://github.com/infiniflow/ragflow.git | nuc25 |
-| `nuc25.local/langfuse` (plain nested clone, not a submodule) | https://github.com/langfuse/langfuse.git | nuc25 |
+| `nuc25.local/langfuse` | https://github.com/langfuse/langfuse.git | nuc25 |
 | `macstudio.local/vllm-metal` | https://github.com/vllm-project/vllm-metal.git | macstudio |
 | `macstudio.local/infinity` | https://github.com/michaelfeil/infinity.git | macstudio |
 | `macstudio.local/anemll-server` | https://github.com/alexgusevski/anemll-server.git | macstudio |

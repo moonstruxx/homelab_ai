@@ -70,6 +70,7 @@ All submodules are registered in the root `.gitmodules`:
 | Path | Upstream | Initialized on |
 |------|----------|-----------------|
 | `nuc25.local/ragflow` | https://github.com/infiniflow/ragflow.git | nuc25 |
+| `nuc25.local/langfuse` | https://github.com/langfuse/langfuse.git | nuc25 |
 | `macstudio.local/vllm-metal` | https://github.com/vllm-project/vllm-metal.git | macstudio |
 | `macstudio.local/infinity` | https://github.com/michaelfeil/infinity.git | macstudio |
 | `macstudio.local/anemll-server` | https://github.com/alexgusevski/anemll-server.git | macstudio |
@@ -77,7 +78,7 @@ All submodules are registered in the root `.gitmodules`:
 | `macstudio.local/wyoming-whisper-cpp` | https://github.com/rhasspy/wyoming-whisper-cpp.git | macstudio |
 | `macstudio.local/mlx-vlm` | https://github.com/Blaizzy/mlx-vlm.git | macstudio — **orphaned as of 2026-07-12**: was only a dependency of the now-retired vllm-metal/PaddleOCR-VL backend (see macstudio.local/CLAUDE.md); confirmed not installed in mineru-api's venv either. Not yet deinit'd/removed from `.gitmodules` — flagged for a decision, not acted on. |
 
-`nuc25.local/langfuse` is **not** a registered submodule — it's a plain nested git clone (own `.git`, remote `https://github.com/langfuse/langfuse.git`) checked out directly on nuc25. It doesn't show up in `git submodule status` or get pinned via `.gitmodules`; treat it the same as a submodule for update purposes (see below) but pull it directly with `git pull` inside `nuc25.local/langfuse/`, not via `git submodule update`.
+`nuc25.local/langfuse` is a registered submodule as of 2026-07-18 (previously a plain nested clone with a stray, unregistered gitlink — same class of bug as an earlier `.claude/worktrees` gitlink mixup). Like `ragflow`'s `homelab/cleanup-node` pin, its pinned commit (`5c3b9f4a8`, "local compose", adds `docker-compose.nuc.yml`) is a **local-only commit not present on the public upstream** — don't expect a fresh `git submodule update --init` elsewhere to be able to fetch it; the working checkout only exists on nuc25.
 
 tp42's own clone of this monorepo has none of the submodules initialized (`git submodule status` there just shows placeholder gitlinks) — submodule content only exists where it's actually used: `ragflow` on nuc25, everything else on macstudio. Run submodule commands on the host that has them checked out, not on tp42.
 
