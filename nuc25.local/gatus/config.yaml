@@ -253,6 +253,11 @@ endpoints:
       - type: ntfy
 
   - name: Daytona Bridge
-    endpoint: http://daytona-bridge:8000/health
+    group: "nuc25 — RAG Core"
+    url: "http://daytona-bridge:8000/health"
+    description: "Daytona agentic sandbox bridge | docker network: daytona-bridge:8000 | FastAPI code-execution tool server for RAGFlow agents"
     interval: 30s
-    retry_on_failure: true
+    conditions:
+      - "[STATUS] == 200"
+    alerts:
+      - type: ntfy
