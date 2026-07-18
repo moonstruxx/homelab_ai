@@ -1,6 +1,9 @@
 [submodule "nuc25.local/ragflow"]
 	path = nuc25.local/ragflow
 	url = https://github.com/infiniflow/ragflow.git
+[submodule "nuc25.local/langfuse"]
+	path = nuc25.local/langfuse
+	url = https://github.com/langfuse/langfuse.git
 [submodule "macstudio.local/vllm-metal"]
 	path = macstudio.local/vllm-metal
 	url = https://github.com/vllm-project/vllm-metal.git
