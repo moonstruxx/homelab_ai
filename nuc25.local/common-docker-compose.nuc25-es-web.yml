@@ -703,3 +703,18 @@ volumes:
   langfuse_caddy_config:
   wud_data:
   ntfy_data:
+
+  daytona-bridge:
+    build: ./daytona-bridge
+    container_name: daytona-bridge
+    restart: always
+    networks:
+      - ragflow
+      - rag-data
+    environment:
+      - DAYTONA_API_KEY=${DAYTONA_API_KEY}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
