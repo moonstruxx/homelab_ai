@@ -1,1 +1,4 @@
 .env.local
+
+# Claude Code agent worktrees (nested git checkouts, never tracked in main repo)
+.claude/worktrees/
