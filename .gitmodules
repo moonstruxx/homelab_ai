@@ -22,3 +22,6 @@
 [submodule "macstudio.local/mlx-vlm"]
 	path = macstudio.local/mlx-vlm
 	url = https://github.com/Blaizzy/mlx-vlm.git
+[submodule "common/claude-skills"]
+	path = common/claude-skills
+	url = https://github.com/alirezarezvani/claude-skills.git
